@@ -1,4 +1,4 @@
-module github.com/orivej/go-nix
+module github.com/Aleksanaa/go-nix
 
 go 1.22.7
 
