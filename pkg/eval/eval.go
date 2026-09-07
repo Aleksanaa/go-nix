@@ -60,10 +60,6 @@ func EvalString(s string) (NixValue, error) {
 	return Eval(pr)
 }
 
-func (x *Expression) tokenString(i int) string {
-	return x.parser().TokenString(x.Node.Tokens[i])
-}
-
 // resolve evaluates one syntax node, setting either Value (the result) or
 // Lower (an expression to evaluate in its place).
 func (x *Expression) resolve() {
@@ -72,33 +68,41 @@ func (x *Expression) resolve() {
 	default:
 		throwf(ErrEval, "unsupported expression: %v", nt)
 
+	// A literal is the same value however often it is evaluated, so each of
+	// these is worked out once and kept against the node.
 	case p.URINode:
-		x.Value = &NixString{Content: x.tokenString(0)}
+		x.Value = x.Scope.literal(n, func(s string) NixValue { return String(s) })
 
 	case p.PathNode:
 		// TODO: resolve relative to the file being evaluated, and <lookup>
 		// paths through NIX_PATH.
-		x.Value = &NixPath{Root: "/", Path: x.tokenString(0)}
+		x.Value = x.Scope.literal(n, func(s string) NixValue {
+			return &NixPath{Root: "/", Path: s}
+		})
 
 	case p.FloatNode:
-		val, err := strconv.ParseFloat(x.tokenString(0), 64)
-		if err != nil {
-			throwf(ErrSyntax, "invalid float %q", x.tokenString(0))
-		}
-		x.Value = NixFloat(val)
+		x.Value = x.Scope.literal(n, func(s string) NixValue {
+			val, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				throwf(ErrSyntax, "invalid float %q", s)
+			}
+			return NixFloat(val)
+		})
 
 	case p.IntNode:
-		val, err := strconv.ParseInt(x.tokenString(0), 10, 64)
-		if err != nil {
-			throwf(ErrSyntax, "invalid integer %q", x.tokenString(0))
-		}
-		x.Value = NixInt(val)
+		x.Value = x.Scope.literal(n, func(s string) NixValue {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				throwf(ErrSyntax, "invalid integer %q", s)
+			}
+			return NixInt(val)
+		})
 
 	case p.StringNode, p.IStringNode:
 		x.Value = x.evalString()
 
 	case p.IDNode:
-		sym := Intern(x.tokenString(0))
+		sym := x.Scope.name(n)
 		y, ok := x.Scope.Lookup(sym)
 		if !ok {
 			throwf(ErrUndefinedVariable, "undefined variable '%s'", sym)
@@ -157,8 +161,15 @@ func (x *Expression) resolve() {
 	}
 }
 
-// evalString evaluates a quoted or an indented string literal.
+// evalString evaluates a quoted or an indented string literal. One with no
+// interpolation in it is a literal like any other, and is kept against the
+// node rather than rebuilt on every evaluation.
 func (x *Expression) evalString() NixValue {
+	entry := x.Scope.file.static.get(x.Node.ID)
+	if entry.val != nil {
+		return entry.val
+	}
+	interpolated := false
 	parts := make([]stringPart, 0, len(x.Node.Nodes))
 	indented := x.Node.Type == p.IStringNode
 	for _, c := range x.Node.Nodes {
@@ -169,6 +180,7 @@ func (x *Expression) evalString() NixValue {
 			parts = append(parts, stringPart{text: x.parser().TokenString(c.Tokens[0])})
 		case p.InterpNode:
 			// Interpolations are evaluated in source order, as Nix does.
+			interpolated = true
 			part := x.evalNodeAs(c.Nodes[0], blameInterp, 0)
 			parts = append(parts, stringPart{interp: CoerceToString(part)})
 		}
@@ -192,6 +204,9 @@ func (x *Expression) evalString() NixValue {
 		}
 	}
 	result.Content = b.String()
+	if !interpolated {
+		entry.val = result
+	}
 	return result
 }
 
@@ -223,7 +238,7 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 			// `inherit a;` is `a = a;` evaluated in the enclosing scope.
 			for _, id := range c.Nodes[0].Nodes {
 				y := x.WithNode(id)
-				sym := Intern(x.Scope.attrName(id))
+				sym := x.Scope.attrSym(id)
 				set.Bind1(sym, y.blaming(blameAttr, sym))
 			}
 
@@ -232,7 +247,7 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 			// shared by every name inherited from it.
 			from := x.WithScoped(c.Nodes[0], scope)
 			for _, id := range c.Nodes[1].Nodes {
-				sym := Intern(x.Scope.attrName(id))
+				sym := x.Scope.attrSym(id)
 				set.Bind1(sym, from.selectAttr(sym).blaming(blameAttr, sym))
 			}
 		}
@@ -286,7 +301,7 @@ func (x *Expression) evalFunction() NixValue {
 	for _, c := range n.Nodes[:len(n.Nodes)-1] {
 		switch c.Type {
 		case p.IDNode:
-			fn.Arg, fn.HasArg = Intern(x.WithNode(c).tokenString(0)), true
+			fn.Arg, fn.HasArg = x.Scope.name(c), true
 		case p.ArgSetNode:
 			fn.HasFormal = true
 			fn.Formal = make(map[Sym]*p.Node, len(c.Nodes))
@@ -296,7 +311,7 @@ func (x *Expression) evalFunction() NixValue {
 					fn.HasEllipsis = true // `...`
 					continue
 				}
-				sym := Intern(x.WithNode(arg.Nodes[0]).tokenString(0))
+				sym := x.Scope.name(arg.Nodes[0])
 				var def *p.Node // `a ? default`
 				if len(arg.Nodes) == 2 {
 					def = arg.Nodes[1]

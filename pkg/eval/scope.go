@@ -22,29 +22,38 @@ type Scope struct {
 	expr *Expression // its value, and the marker for the single-name case
 
 	Parent *Scope
-	// Parser is the file the expressions in this scope were parsed from. It
-	// lives here rather than on every Expression, of which there are orders of
-	// magnitude more.
-	Parser  *p.Parser
+	// file is the source these expressions were parsed from, together with what
+	// has been worked out about its nodes. It lives here rather than on every
+	// Expression, of which there are orders of magnitude more.
+	file    *file
 	LowPrio bool
 }
 
 // Subscope nests a scope binding a set of names.
 func (scope *Scope) Subscope(binds NixSet, lowPrio bool) *Scope {
-	return &Scope{Binds: binds, LowPrio: lowPrio, Parent: scope, Parser: scope.Parser}
+	return &Scope{Binds: binds, LowPrio: lowPrio, Parent: scope, file: scope.file}
 }
 
 // Subscope1 nests a scope binding a single name.
 func (scope *Scope) Subscope1(sym Sym, x *Expression) *Scope {
-	return &Scope{sym: sym, expr: x, Parent: scope, Parser: scope.Parser}
+	return &Scope{sym: sym, expr: x, Parent: scope, file: scope.file}
 }
 
 // ForFile returns the scope bound to a parsed file, which is how the root
 // scope of an evaluation is made from the shared DefaultScope.
 func (scope *Scope) ForFile(pr *p.Parser) *Scope {
 	s := *scope
-	s.Parser = pr
+	s.file = &file{parser: pr}
 	return &s
+}
+
+// parser is the source the expressions in this scope were parsed from, or nil
+// for a scope with no syntax behind it.
+func (scope *Scope) parser() *p.Parser {
+	if scope == nil || scope.file == nil {
+		return nil
+	}
+	return scope.file.parser
 }
 
 // Lookup finds sym, searching lexical bindings first and `with` bindings only
@@ -77,27 +86,29 @@ func (scope *Scope) evalNode(n *p.Node) NixValue {
 }
 
 // evalAttrPath evaluates the names of an attribute path, such as the
-// `a."b".${c}` of a binding or a selection. The path node is passed in rather
+// `a."b".` of a binding or a selection. The path node is passed in rather
 // than wrapped in an expression, since nothing needs it afterwards.
 func (scope *Scope) evalAttrPath(path *p.Node) []Sym {
 	attrs := make([]Sym, len(path.Nodes))
 	for i, c := range path.Nodes {
-		attrs[i] = Intern(scope.attrName(c))
+		attrs[i] = scope.attrSym(c)
 	}
 	return attrs
 }
 
-// attrName evaluates one component of an attribute path to its name.
-func (scope *Scope) attrName(n *p.Node) string {
+// attrSym evaluates one component of an attribute path to its interned name.
+// A plain identifier is interned once and kept against the node; a computed
+// one has to be evaluated every time.
+func (scope *Scope) attrSym(n *p.Node) Sym {
 	switch n.Type {
 	case p.IDNode:
-		return scope.Parser.TokenString(n.Tokens[0])
+		return scope.name(n)
 	case p.StringNode, p.IStringNode:
-		return CoerceToString(scope.evalNode(n)).Content
+		return Intern(CoerceToString(scope.evalNode(n)).Content)
 	case p.InterpNode:
-		return CoerceToString(scope.evalNode(n.Nodes[0])).Content
+		return Intern(CoerceToString(scope.evalNode(n.Nodes[0])).Content)
 	default:
 		throwf(ErrEval, "unsupported attribute name: %v", n.Type)
-		return ""
+		return 0
 	}
 }

@@ -106,10 +106,10 @@ reports a timing, and subtracts each one's startup from the ratio.
 
 ## Where the time goes
 
-Across the suite gon is 3.4 to 6.7 times slower than Nix. The spread is the
+Across the suite gon is 2.8 to 5.5 times slower than Nix. The spread is the
 interesting part: it is smallest on pure function calls and arithmetic
-(`hanoi-calls`, 3.4x) and largest where values are built rather than computed
-(`hanoi`, 6.7x, and `attrs`, 5.7x).
+(`hanoi-calls`, 2.8x) and largest where values are built rather than computed
+(`hanoi`, 5.5x).
 
 Evaluation is allocation bound: a CPU profile (`gon --profile eval -f ...`,
 then `go tool pprof`) spends more than half its samples in the garbage
@@ -122,6 +122,8 @@ than any computation. Four changes came out of that, on 18-disk Hanoi:
 | 64-byte thunks, and forced thunks dropping what produced them | 1214 ms | 608 MB |
 | operands evaluated without allocating a thunk | 1155 ms | 608 MB |
 | single-argument calls binding without a map | 882 ms | 311 MB |
+| delegating to a sub-expression without a thunk | 815 ms | 311 MB |
+| literals and names worked out once per node, not per evaluation | 745 ms | 300 MB |
 | Nix, for comparison | 139 ms | |
 
 The first two are the interesting ones. A thunk that has been forced is
@@ -144,6 +146,25 @@ caller-provided value instead of an allocated thunk.
 `exprSlabSize` in `expr.go` allocates thunks in blocks. It is off by default:
 it is 14% faster and 2.4 times larger, because a block cannot be freed until
 every thunk in it is unreachable.
+
+## Borrowed from the TypeScript compiler
+
+The Go port of the TypeScript compiler solves two of the same problems, and
+`static.go` follows it:
+
+- Nodes are numbered densely by the parser, so anything worked out about a node
+  is kept in a sparse array of fixed-size pages rather than a map — two array
+  indexes and no hashing. Their version is `core.PagedLinkStore`. The `ID` field
+  this needs packs into padding `parser.Node` already had, so it is free.
+- Their `core.Arena` is the same block allocator as `exprSlabSize`, and they
+  keep it on, because a compiler holds its whole syntax and type graph for the
+  session. That is the rule this evaluator fails: it allocates values whose
+  lifetimes are mixed, so a block outlives most of what is in it.
+
+Their comment that "an interface call is opaque to escape analysis" is also
+worth keeping in mind here: it is why evaluating an operand through a concrete
+type keeps it off the heap, and it is an argument against `NixValue` being an
+interface at all.
 
 # Development
 

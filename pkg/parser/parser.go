@@ -4,7 +4,11 @@ package parser
 //go:generate sed "/yyS :=/a\\\tp := yylex.(*Parser)" -i y.go
 
 type Node struct {
-	Type   NodeType
+	Type NodeType
+	// ID numbers the nodes of one parse densely from zero, so that a pass over
+	// the tree can keep its own data about a node in a plain array instead of a
+	// map. It packs into the padding after Type, so it costs nothing.
+	ID     uint32
 	Tokens []int
 	Nodes  []*Node
 
@@ -19,8 +23,9 @@ type Parser struct {
 	last   int
 	errors ParserErrors
 
-	nodes    []Node
-	nextNode int
+	nodes     []Node
+	nextNode  int
+	nodeCount uint32
 
 	Result *Node
 }
@@ -52,6 +57,8 @@ func (p *Parser) NewNode(t NodeType, tokens ...int) *Node {
 	n := &p.nodes[p.nextNode]
 	p.nextNode++
 	n.Type = t
+	n.ID = p.nodeCount
+	p.nodeCount++
 	n.Tokens = tokens
 	n.Nodes = n.preallocatedNodes[:0]
 	return n
@@ -70,6 +77,10 @@ func (n *Node) N(nodes ...*Node) *Node    { n.Nodes = append(n.Nodes, nodes...);
 func (n *Node) N1(n0 *Node) *Node         { n.Nodes = append(n.Nodes, n0); return n }
 func (n *Node) N2(n0, n1 *Node) *Node     { n.Nodes = append(n.Nodes, n0, n1); return n }
 func (n *Node) N3(n0, n1, n2 *Node) *Node { n.Nodes = append(n.Nodes, n0, n1, n2); return n }
+
+// NodeCount is how many nodes the parse produced, and so the exclusive upper
+// bound of every Node.ID it produced.
+func (p *Parser) NodeCount() uint32 { return p.nodeCount }
 
 func (p *Parser) LispResult() string {
 	return p.Result.lispFormat(p)

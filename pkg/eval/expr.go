@@ -115,7 +115,7 @@ func (x *Expression) parser() *p.Parser {
 	if x.Scope == nil {
 		return nil
 	}
-	return x.Scope.Parser
+	return x.Scope.parser()
 }
 
 // WithNode derives an unevaluated expression for a sibling node, in the same
@@ -164,10 +164,7 @@ func (x *Expression) Pos() *p.LexPosition {
 // parser is the file the frame's node was parsed from, or nil for a frame with
 // no syntax behind it, such as a builtin.
 func (f evalFrame) parser() *p.Parser {
-	if f.scope == nil {
-		return nil
-	}
-	return f.scope.Parser
+	return f.scope.parser()
 }
 
 // pos reports where the frame's expression starts, or nil when it has no

@@ -10,7 +10,11 @@ import (
 
 var (
 	actions = map[string]func(){}
-	prof    = kingpin.Flag("profile", "Profile performance.").Bool()
+	// Both kinds of profile are worth having: evaluation is allocation bound,
+	// so the allocation profile is usually the one that says where the time
+	// went, and it is the one to watch when optimizing.
+	prof = kingpin.Flag("profile",
+		"Write a profile to the current directory: cpu or alloc.").Enum("cpu", "alloc")
 )
 
 func register(name string, f func()) func() {
@@ -32,8 +36,14 @@ func fail(err error) {
 func main() {
 	kingpin.HelpFlag.Short('h')
 	action := kingpin.Parse()
-	if *prof {
+	switch *prof {
+	case "cpu":
 		defer profile.Start(profile.ProfilePath(".")).Stop()
+	case "alloc":
+		// Sample every allocation: the point is to count them, not to sample
+		// a long-running heap.
+		defer profile.Start(profile.MemProfile, profile.MemProfileRate(1),
+			profile.ProfilePath(".")).Stop()
 	}
 	actions[action]()
 }
