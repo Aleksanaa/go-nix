@@ -4,17 +4,18 @@ import (
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
-func (x *Expression) operand(i int) *Expression {
-	return x.WithNode(x.Node.Nodes[i])
+// operand evaluates the i-th child of the current node.
+func (x *Expression) operand(i int) NixValue {
+	return x.evalNode(x.Node.Nodes[i])
 }
 
 func (x *Expression) evalUnaryOp(nt p.NodeType) NixValue {
 	switch nt {
 	case p.OpNotNode:
-		return !assertBool(x.operand(0).Eval())
+		return !assertBool(x.operand(0))
 
 	case p.OpNegateNode:
-		switch v := x.operand(0).Eval().(type) {
+		switch v := x.operand(0).(type) {
 		case NixInt:
 			return -v
 		case NixFloat:
@@ -26,8 +27,8 @@ func (x *Expression) evalUnaryOp(nt p.NodeType) NixValue {
 	case p.OpQuestionNode:
 		// `e ? a.b` tests for an attribute path without forcing the value it
 		// finds; a non-set anywhere along the path simply makes it false.
-		val := x.operand(0).Eval()
-		path := x.operand(1).evalAttrPath()
+		val := x.operand(0)
+		path := x.Scope.evalAttrPath(x.Node.Nodes[1])
 		for i, sym := range path {
 			set, ok := val.(NixSet)
 			if !ok {
@@ -54,25 +55,25 @@ func (x *Expression) evalBinaryOp(nt p.NodeType) NixValue {
 	// `&&`, `||` and `->` are short-circuiting, so the right operand is only
 	// forced when the left one does not already decide the answer.
 	case p.OpAndNode:
-		if !assertBool(x.operand(0).Eval()) {
+		if !assertBool(x.operand(0)) {
 			return NixBool(false)
 		}
-		return assertBool(x.operand(1).Eval())
+		return assertBool(x.operand(1))
 
 	case p.OpOrNode:
-		if assertBool(x.operand(0).Eval()) {
+		if assertBool(x.operand(0)) {
 			return NixBool(true)
 		}
-		return assertBool(x.operand(1).Eval())
+		return assertBool(x.operand(1))
 
 	case p.OpImplNode:
-		if !assertBool(x.operand(0).Eval()) {
+		if !assertBool(x.operand(0)) {
 			return NixBool(true)
 		}
-		return assertBool(x.operand(1).Eval())
+		return assertBool(x.operand(1))
 	}
 
-	lhs, rhs := x.operand(0).Eval(), x.operand(1).Eval()
+	lhs, rhs := x.operand(0), x.operand(1)
 	switch nt {
 	case p.OpAddNode:
 		return Add(lhs, rhs)

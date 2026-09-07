@@ -26,9 +26,12 @@ type NixExprLambda struct {
 	HasEllipsis bool
 
 	Body *p.Node
-	// Expression is the function expression itself; it carries the defining
-	// scope and the parser the body belongs to.
-	Expression *Expression
+	// Scope is the scope the function was defined in, and Node the function
+	// expression itself, which backtraces point at. They are held directly
+	// rather than through the defining Expression, which drops them once it
+	// has been forced.
+	Scope *Scope
+	Node  *p.Node
 }
 
 func (f *NixExprLambda) Print(recurse int) string { return "«lambda»" }
@@ -37,16 +40,20 @@ func (f *NixExprLambda) Print(recurse int) string { return "«lambda»" }
 func (f *NixExprLambda) Compare(val NixValue) bool { return false }
 
 func (f *NixExprLambda) Apply(arg *Expression) *Expression {
-	binds := make(NixSet, 1+len(f.FormalOrder))
-	scope := f.Expression.Scope.Subscope(binds, false)
-	if f.HasArg {
-		binds[f.Arg] = arg
-	}
+	var scope *Scope
 	if f.HasFormal {
+		binds := make(NixSet, 1+len(f.FormalOrder))
+		scope = f.Scope.Subscope(binds, false)
+		if f.HasArg {
+			binds[f.Arg] = arg
+		}
 		f.bindFormals(binds, scope, arg)
+	} else {
+		// `arg: body` binds one name, so it needs no map.
+		scope = f.Scope.Subscope1(f.Arg, arg)
 	}
 	// The frame points at the function, which says more than its body would.
-	return f.Expression.WithScoped(f.Body, scope).blamingAt(blameCall, 0, f.Expression.Node)
+	return newScoped(scope, f.Body).blamingAt(blameCall, 0, f.Node)
 }
 
 // bindFormals matches the argument against `{ a, b ? d, ... }` and adds the
@@ -63,7 +70,7 @@ func (f *NixExprLambda) bindFormals(binds NixSet, scope *Scope, arg *Expression)
 		case given:
 			binds[sym] = y
 		case f.Formal[sym] != nil:
-			binds[sym] = f.Expression.WithScoped(f.Formal[sym], scope).blaming(blameAttr, sym)
+			binds[sym] = newScoped(scope, f.Formal[sym]).blaming(blameAttr, sym)
 		default:
 			throwf(ErrEval, "function called without required argument '%s'", sym)
 		}

@@ -5,7 +5,9 @@ import (
 	"strings"
 )
 
-type Sym int
+// Sym is an interned name. It is int32 so that it packs into the tail of an
+// Expression without widening it.
+type Sym int32
 
 type Symtab struct {
 	names []string

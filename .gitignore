@@ -1,4 +1,6 @@
 cmd/gon/gon
+/gon
 result
 result-bin
 /.direnv
+cpu.pprof

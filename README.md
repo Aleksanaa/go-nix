@@ -76,6 +76,54 @@ Non-termination is reported rather than crashing: a thunk that is already being
 forced fails with `infinite recursion encountered`, and evaluation that nests
 past `maxCallDepth` fails with a stack overflow error.
 
+# Examples
+
+`examples/hanoi.nix` solves the Towers of Hanoi, and `examples/hanoi-calls.nix`
+only counts the moves; both evaluate to the same value under `nix` and under
+`gon`, and the work doubles with every disk added.
+
+```sh
+$ gon eval -f examples/hanoi.nix
+$ nix-instantiate --eval examples/hanoi.nix
+$ examples/bench.sh hanoi.nix 10 18   # time both, checking they agree
+```
+
+## Where the time goes
+
+Evaluation is allocation bound: a CPU profile (`gon --profile eval -f ...`,
+then `go tool pprof`) spends more than half its samples in the garbage
+collector, and an allocation profile names the thunks and the scopes rather
+than any computation. Four changes came out of that, on 18-disk Hanoi:
+
+| | time | peak RSS |
+| --- | --- | --- |
+| starting point | 1556 ms | 761 MB |
+| 64-byte thunks, and forced thunks dropping what produced them | 1214 ms | 608 MB |
+| operands evaluated without allocating a thunk | 1155 ms | 608 MB |
+| single-argument calls binding without a map | 882 ms | 311 MB |
+| Nix, for comparison | 139 ms | |
+
+The first two are the interesting ones. A thunk that has been forced is
+nothing but its value, so `force` clears its scope, node and delegate; keeping
+them alive was pinning whole scope chains for as long as any value derived
+from them lived. And an operand that is consumed immediately — the two sides
+of an operator, a condition, the function of an application — never needs to
+become a thunk at all: the evaluation stack records copies rather than
+pointers, so those expressions stay on the Go stack.
+
+What remains is structural, and the profile is unambiguous about the order:
+function calls allocate a Go map per call frame when the function has formal
+arguments, every expression that is genuinely lazy still costs a heap thunk,
+and attribute sets are Go maps where Nix uses sorted arrays. Closing the
+remaining gap means what Nix does: a pass over the AST that resolves each
+variable to a position in a flat environment, values as a tagged struct rather
+than a Go interface (which boxes every integer), and evaluation into a
+caller-provided value instead of an allocated thunk.
+
+`exprSlabSize` in `expr.go` allocates thunks in blocks. It is off by default:
+it is 14% faster and 2.4 times larger, because a block cannot be freed until
+every thunk in it is unreachable.
+
 # Development
 
 ## How to build

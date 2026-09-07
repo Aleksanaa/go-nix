@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/alecthomas/assert"
-	"github.com/orivej/e"
 	"github.com/aleksanaa/go-nix/pkg/util"
+	"github.com/orivej/e"
 )
 
 func TestLexOne(t *testing.T) {

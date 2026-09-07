@@ -86,21 +86,21 @@ func throwf(kind ErrorKind, format string, args ...any) {
 // capture records where the failure happened: the position of the innermost
 // expression that has one, and a frame for every enclosing expression that is
 // worth naming.
-func (e *EvalError) capture(stack []*Expression) {
+func (e *EvalError) capture(stack []evalFrame) {
 	for i := len(stack) - 1; i >= 0; i-- {
-		x := stack[i]
+		f := stack[i]
 		if e.Pos == nil {
-			if pos := x.Pos(); pos != nil {
-				e.Pos, e.Line = pos, x.Parser.SourceLine(pos)
+			if pos := f.pos(); pos != nil {
+				e.Pos, e.Line = pos, f.parser().SourceLine(pos)
 			}
 		}
-		if x.blame == blameNone {
+		if f.blame == blameNone {
 			continue
 		}
 		if len(e.Trace) == maxTraceFrames {
 			break
 		}
-		e.Trace = append(e.Trace, x.frame())
+		e.Trace = append(e.Trace, f.traceFrame())
 	}
 }
 

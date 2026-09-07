@@ -21,7 +21,8 @@ import (
 // the method directly.
 func Eval(pr *p.Parser) (NixValue, error) {
 	return catching(func() NixValue {
-		x := &Expression{Parser: pr, Node: pr.Result, Scope: DefaultScope}
+		x := newExpr()
+		x.Scope, x.Node = DefaultScope.ForFile(pr), pr.Result
 		return x.Eval()
 	})
 }
@@ -60,7 +61,7 @@ func EvalString(s string) (NixValue, error) {
 }
 
 func (x *Expression) tokenString(i int) string {
-	return x.Parser.TokenString(x.Node.Tokens[i])
+	return x.parser().TokenString(x.Node.Tokens[i])
 }
 
 // resolve evaluates one syntax node, setting either Value (the result) or
@@ -121,11 +122,11 @@ func (x *Expression) resolve() {
 		x.evalSelect(nt)
 
 	case p.WithNode:
-		attrs := x.WithNode(n.Nodes[0]).blaming(blameWith, 0)
-		x.Lower = x.WithScoped(n.Nodes[1], x.Scope.Subscope(assertSet(attrs.Eval()), true))
+		attrs := assertSet(x.evalNodeAs(n.Nodes[0], blameWith, 0))
+		x.Lower = x.WithScoped(n.Nodes[1], x.Scope.Subscope(attrs, true))
 
 	case p.IfNode:
-		cond := assertBool(x.WithNode(n.Nodes[0]).blaming(blameCond, 0).Eval())
+		cond := assertBool(x.evalNodeAs(n.Nodes[0], blameCond, 0))
 		if cond {
 			x.Lower = x.WithNode(n.Nodes[1])
 		} else {
@@ -133,8 +134,8 @@ func (x *Expression) resolve() {
 		}
 
 	case p.AssertNode:
-		if !assertBool(x.WithNode(n.Nodes[0]).blaming(blameAssert, 0).Eval()) {
-			throwf(ErrAssertion, "assertion '%s' failed", x.Parser.NodeString(n.Nodes[0]))
+		if !assertBool(x.evalNodeAs(n.Nodes[0], blameAssert, 0)) {
+			throwf(ErrAssertion, "assertion '%s' failed", x.parser().NodeString(n.Nodes[0]))
 		}
 		x.Lower = x.WithNode(n.Nodes[1])
 
@@ -142,7 +143,7 @@ func (x *Expression) resolve() {
 		x.Value = x.evalFunction()
 
 	case p.ApplyNode:
-		fn := assertLambda(x.WithNode(n.Nodes[0]).Eval())
+		fn := assertLambda(x.evalNode(n.Nodes[0]))
 		x.Lower = fn.Apply(x.WithNode(n.Nodes[1]))
 
 	case p.OpNegateNode, p.OpNotNode, p.OpQuestionNode:
@@ -165,11 +166,11 @@ func (x *Expression) evalString() NixValue {
 		default:
 			throwf(ErrEval, "unsupported string part: %v", c.Type)
 		case p.TextNode:
-			parts = append(parts, stringPart{text: x.Parser.TokenString(c.Tokens[0])})
+			parts = append(parts, stringPart{text: x.parser().TokenString(c.Tokens[0])})
 		case p.InterpNode:
 			// Interpolations are evaluated in source order, as Nix does.
-			y := x.WithNode(c.Nodes[0]).blaming(blameInterp, 0)
-			parts = append(parts, stringPart{interp: CoerceToString(y.Eval())})
+			part := x.evalNodeAs(c.Nodes[0], blameInterp, 0)
+			parts = append(parts, stringPart{interp: CoerceToString(part)})
 		}
 	}
 	if indented {
@@ -214,7 +215,7 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 			throwf(ErrEval, "unsupported binding: %v", c.Type)
 
 		case p.BindNode:
-			attrpath := x.WithScoped(c.Nodes[0], scope).evalAttrPath()
+			attrpath := scope.evalAttrPath(c.Nodes[0])
 			y := x.WithScoped(c.Nodes[1], scope)
 			set.Bind(attrpath, y.blaming(blameAttr, attrpath[len(attrpath)-1]))
 
@@ -222,7 +223,7 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 			// `inherit a;` is `a = a;` evaluated in the enclosing scope.
 			for _, id := range c.Nodes[0].Nodes {
 				y := x.WithNode(id)
-				sym := Intern(y.attrName())
+				sym := Intern(x.Scope.attrName(id))
 				set.Bind1(sym, y.blaming(blameAttr, sym))
 			}
 
@@ -231,7 +232,7 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 			// shared by every name inherited from it.
 			from := x.WithScoped(c.Nodes[0], scope)
 			for _, id := range c.Nodes[1].Nodes {
-				sym := Intern(x.WithNode(id).attrName())
+				sym := Intern(x.Scope.attrName(id))
 				set.Bind1(sym, from.selectAttr(sym).blaming(blameAttr, sym))
 			}
 		}
@@ -246,7 +247,7 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 // evalSelect evaluates `e.a.b` and `e.a.b or fallback`.
 func (x *Expression) evalSelect(nt p.NodeType) {
 	n := x.Node
-	attrpath := x.WithNode(n.Nodes[1]).evalAttrPath()
+	attrpath := x.Scope.evalAttrPath(n.Nodes[1])
 	var or *Expression
 	if nt == p.SelectOrNode {
 		or = x.WithNode(n.Nodes[2])
@@ -281,7 +282,7 @@ func (x *Expression) evalSelect(nt p.NodeType) {
 // argument set (`{ a, b ? 1, ... }: …`).
 func (x *Expression) evalFunction() NixValue {
 	n := x.Node
-	fn := &NixExprLambda{Expression: x, Body: n.Nodes[len(n.Nodes)-1]}
+	fn := &NixExprLambda{Scope: x.Scope, Node: n, Body: n.Nodes[len(n.Nodes)-1]}
 	for _, c := range n.Nodes[:len(n.Nodes)-1] {
 		switch c.Type {
 		case p.IDNode:
@@ -329,30 +330,4 @@ func (x *Expression) selectAttr(sym Sym) *Expression {
 		}
 		return y.Eval()
 	})
-}
-
-// evalAttrPath evaluates the names of an attribute path, such as the
-// `a."b".${c}` of a binding or a selection.
-func (x *Expression) evalAttrPath() []Sym {
-	attrs := make([]Sym, len(x.Node.Nodes))
-	for i, c := range x.Node.Nodes {
-		attrs[i] = Intern(x.WithNode(c).attrName())
-	}
-	return attrs
-}
-
-// attrName evaluates one component of an attribute path to its name.
-func (x *Expression) attrName() string {
-	switch x.Node.Type {
-	case p.IDNode:
-		return x.tokenString(0)
-	case p.StringNode, p.IStringNode:
-		return CoerceToString(x.Eval()).Content
-	case p.InterpNode:
-		y := x.WithNode(x.Node.Nodes[0]).blaming(blameInterp, 0)
-		return CoerceToString(y.Eval()).Content
-	default:
-		throwf(ErrEval, "unsupported attribute name: %v", x.Node.Type)
-		return ""
-	}
 }
