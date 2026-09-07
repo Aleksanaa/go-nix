@@ -78,17 +78,38 @@ past `maxCallDepth` fails with a stack overflow error.
 
 # Examples
 
-`examples/hanoi.nix` solves the Towers of Hanoi, and `examples/hanoi-calls.nix`
-only counts the moves; both evaluate to the same value under `nix` and under
-`gon`, and the work doubles with every disk added.
+`examples/` holds a benchmark suite: self-contained Nix expressions that both
+`nix` and `gon` accept, each one leaning on a different part of an evaluator.
+Every file takes its size from a single `n` on its own line, so a workload can
+be scaled without editing it.
+
+| workload | what it leans on |
+| --- | --- |
+| `hanoi-calls` | function application and integer arithmetic, and nothing else |
+| `hanoi` | list building and set construction, doubling with every disk |
+| `attrs` | building, merging and indexing large attribute sets |
+| `lookup` | resolving names ten scopes up, and through a `with` |
+| `lists` | `map`, `filter`, `sort` and a strict fold calling back into Nix |
+| `strings` | interpolation, concatenation and the string builtins |
+| `lazy` | creating three million thunks and forcing thirty thousand |
+| `fix` | a fixpoint with an overlay, the shape Nixpkgs is built from |
 
 ```sh
 $ gon eval -f examples/hanoi.nix
 $ nix-instantiate --eval examples/hanoi.nix
-$ examples/bench.sh hanoi.nix 10 18   # time both, checking they agree
+$ examples/bench.sh                   # the whole suite
+$ examples/bench.sh hanoi.nix 10 18   # one workload, swept over n
 ```
 
+`bench.sh` checks that the two evaluators produce the same value before it
+reports a timing, and subtracts each one's startup from the ratio.
+
 ## Where the time goes
+
+Across the suite gon is 3.4 to 6.7 times slower than Nix. The spread is the
+interesting part: it is smallest on pure function calls and arithmetic
+(`hanoi-calls`, 3.4x) and largest where values are built rather than computed
+(`hanoi`, 6.7x, and `attrs`, 5.7x).
 
 Evaluation is allocation bound: a CPU profile (`gon --profile eval -f ...`,
 then `go tool pprof`) spends more than half its samples in the garbage

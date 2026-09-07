@@ -1,5 +1,6 @@
 cmd/gon/gon
 /gon
+/eval.test
 result
 result-bin
 /.direnv

@@ -3,23 +3,24 @@
 #   nix-instantiate --eval examples/hanoi.nix
 #   gon eval -f examples/hanoi.nix
 #
-# The workload is the classic recursion: solving n disks builds a list of
-# 2^n - 1 moves, so the cost doubles with every disk. `disks` is on its own
-# line so that examples/bench.sh can rewrite it.
+# Exercises list building and set construction: solving n disks builds a list
+# of 2^n - 1 moves, so the cost doubles with every disk.
+#
+# `n` is on its own line so that examples/bench.sh can rewrite it.
 let
-  disks = 16;
+  n = 17;
 
-  # Move n disks from peg `from` to peg `to`, using `via` as the spare.
+  # Move k disks from peg `from` to peg `to`, using `via` as the spare.
   # Returns the moves in order, each one { disk, from, to }.
-  solve = n: from: to: via:
-    if n == 0 then
+  solve = k: from: to: via:
+    if k == 0 then
       [ ]
     else
-      solve (n - 1) from via to
-      ++ [ { disk = n; inherit from to; } ]
-      ++ solve (n - 1) via to from;
+      solve (k - 1) from via to
+      ++ [ { disk = k; inherit from to; } ]
+      ++ solve (k - 1) via to from;
 
-  moves = solve disks "a" "c" "b";
+  moves = solve n "a" "c" "b";
 
   # Forcing every move keeps the evaluator from leaving the list as thunks,
   # and the sum stays far below the integer range for any n worth timing.
@@ -30,7 +31,7 @@ let
   first = builtins.head moves;
   last = builtins.elemAt moves (builtins.length moves - 1);
 in
-"disks=${toString disks}"
+"n=${toString n}"
 + " moves=${toString (builtins.length moves)}"
 + " weight=${toString weight}"
 + " first=${first.from}${first.to}"

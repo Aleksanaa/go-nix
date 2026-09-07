@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# Compare gon against nix on the same expression.
+# Compare gon against nix on the example workloads.
 #
-#   examples/bench.sh                          # hanoi.nix, 10 to 18 disks
-#   examples/bench.sh hanoi-calls.nix 12 20
+#   examples/bench.sh                          # every workload, at its own size
+#   examples/bench.sh hanoi.nix 10 18          # one workload, swept over n
 #   GON=./result/bin/gon examples/bench.sh     # time a binary you already have
+#   REPEATS=5 examples/bench.sh                # more runs per measurement
 #
-# Both evaluators are asked for the same value and their answers are compared,
-# so a timing is only reported once the two agree.
+# Each workload is a self-contained Nix expression that both evaluators accept,
+# and each isolates a different part of the evaluator — see the comment at the
+# top of each file. Both evaluators are asked for the same value and their
+# answers are compared, so a timing is only reported once the two agree.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(dirname "$here")
-
-file=${1:-hanoi.nix}
-from=${2:-10}
-to=${3:-18}
 repeats=${REPEATS:-3}
 
 nix=${NIX:-$(command -v nix-instantiate || true)}
@@ -45,28 +44,57 @@ best() {
   echo "$best"
 }
 
-printf '%s, best of %d runs, times in ms\n\n' "$file" "$repeats"
-printf '%6s  %10s  %10s  %8s\n' disks gon nix ratio
-printf '%6s  %10s  %10s  %8s\n' ------ ---------- ---------- --------
+# ratio divides the two evaluation times with process startup taken out of
+# both, since nix spends more than ten times as long as gon getting started and
+# would otherwise look better than it is on the shorter workloads.
+ratio() {
+  awk -v g="$1" -v x="$2" -v bg="$basegon" -v bx="$basenix" 'BEGIN {
+    g -= bg; x -= bx
+    if (g < 1) g = 1
+    if (x < 1) x = 1
+    printf "%.1f", g / x
+  }'
+}
 
-for ((n = from; n <= to; n++)); do
-  src=$work/$n.nix
-  sed "s/^  disks = .*/  disks = $n;/" "$here/$file" > "$src"
-
+# compare times one file and prints a row. $1 is the file, $2 the label.
+compare() {
+  local src=$1 label=$2 a b g x
   a=$("$gon" eval -f "$src")
   b=$("$nix" --eval "$src")
   if [ "$a" != "$b" ]; then
-    printf '%6d  MISMATCH\n  gon: %s\n  nix: %s\n' "$n" "$a" "$b"
-    exit 1
+    printf '%-16s  MISMATCH\n  gon: %s\n  nix: %s\n' "$label" "$a" "$b"
+    return 1
   fi
-
   g=$(best "$gon" eval -f "$src")
   x=$(best "$nix" --eval "$src")
-  printf '%6d  %10d  %10d  %7sx\n' "$n" "$g" "$x" \
-    "$(awk -v g="$g" -v x="$x" 'BEGIN { printf "%.2f", x / (g ? g : 1) }')"
-done
+  printf '%-16s  %8d  %8d  %7sx\n' "$label" "$g" "$x" "$(ratio "$g" "$x")"
+}
 
-echo
-echo "ratio > 1 means gon was faster. Both timings include process startup:"
-printf 'roughly %sms for gon and %sms for nix.\n' \
-  "$(best "$gon" eval 1)" "$(best "$nix" --eval -E 1)"
+header() {
+  printf '\n%-16s  %8s  %8s  %8s\n' "$1" gon nix slower
+  printf '%-16s  %8s  %8s  %8s\n' ---------------- -------- -------- --------
+}
+
+# The floor each evaluator pays before it evaluates anything.
+basegon=$(best "$gon" eval 1)
+basenix=$(best "$nix" --eval -E 1)
+
+if [ $# -eq 0 ]; then
+  header "workload"
+  for src in "$here"/*.nix; do
+    compare "$src" "$(basename "$src" .nix)"
+  done
+else
+  file=$1
+  from=${2:-10}
+  to=${3:-18}
+  header "$file (n)"
+  for ((n = from; n <= to; n++)); do
+    src=$work/$n.nix
+    sed "s/^  n = .*/  n = $n;/" "$here/$file" > "$src"
+    compare "$src" "$n"
+  done
+fi
+
+printf '\nbest of %d runs, wall time in ms including startup, which is %sms for\n' "$repeats" "$basegon"
+printf 'gon and %sms for nix. The ratio has both subtracted.\n' "$basenix"
