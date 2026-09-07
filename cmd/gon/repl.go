@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kingpin"
-	"github.com/orivej/go-nix/pkg/eval"
+	"github.com/aleksanaa/go-nix/pkg/eval"
 )
 
 var replCmd = kingpin.Command("repl", "Read, evaluate and print loop.")

@@ -3,7 +3,7 @@ package eval
 import (
 	"fmt"
 
-	p "github.com/orivej/go-nix/pkg/parser"
+	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
 // blameKind labels why an expression is being evaluated, so that a backtrace

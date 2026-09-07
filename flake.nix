@@ -24,7 +24,9 @@
             go generate ./...
           '';
 
-          vendorHash = "sha256-IQxiDse1YHM/VAfsF8Eo5gFuPCui6NqQcMBgs4wgkXs=";
+          vendorHash = "sha256-dE3YS68DliQVjYLhRCuNRtRzk5ODU4P3vbySN1wZYQg=";
+
+          proxyVendor = true;
 
           ldflags = [ "-s" "-w" ];
         };

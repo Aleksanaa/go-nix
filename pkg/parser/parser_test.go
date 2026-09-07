@@ -5,7 +5,7 @@ import (
 
 	"github.com/alecthomas/assert"
 	"github.com/orivej/e"
-	"github.com/orivej/go-nix/pkg/util"
+	"github.com/aleksanaa/go-nix/pkg/util"
 )
 
 func TestParseOne(t *testing.T) {

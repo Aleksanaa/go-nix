@@ -3,7 +3,7 @@ package eval
 import (
 	"fmt"
 
-	p "github.com/orivej/go-nix/pkg/parser"
+	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
 // NixLambda is a value that can be applied to an argument. Apply is lazy: it

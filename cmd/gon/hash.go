@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/alecthomas/kingpin"
-	"github.com/orivej/go-nix/pkg/nixhash"
+	"github.com/aleksanaa/go-nix/pkg/nixhash"
 )
 
 var (

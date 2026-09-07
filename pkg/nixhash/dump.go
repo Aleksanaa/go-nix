@@ -8,7 +8,7 @@ import (
 	"sort"
 
 	"github.com/orivej/e"
-	"github.com/orivej/go-nix/internal"
+	"github.com/aleksanaa/go-nix/internal"
 )
 
 func dump(p string, sink Sink) {

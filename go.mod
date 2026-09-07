@@ -1,6 +1,6 @@
-module github.com/orivej/go-nix
+module github.com/aleksanaa/go-nix
 
-go 1.22.7
+go 1.26.7
 
 require (
 	github.com/alecthomas/assert v0.0.0-20170929043011-405dbfeb8e38
@@ -10,14 +10,12 @@ require (
 )
 
 require (
-	github.com/alecthomas/colour v0.0.0-20160524082231-60882d9e2721 // indirect
-	github.com/alecthomas/repr v0.0.0-20180818092828-117648cd9897 // indirect
-	github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc // indirect
-	github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/mattn/go-isatty v0.0.3 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/sergi/go-diff v1.0.0 // indirect
-	github.com/stretchr/testify v1.2.2 // indirect
-	golang.org/x/sys v0.0.0-20180828065106-d99a578cf41b // indirect
+	github.com/alecthomas/colour v0.1.0 // indirect
+	github.com/alecthomas/repr v0.5.4 // indirect
+	github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751 // indirect
+	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
+	github.com/sergi/go-diff v1.4.0 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
+	golang.org/x/sys v0.28.0 // indirect
 )

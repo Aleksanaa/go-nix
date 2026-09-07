@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	p "github.com/orivej/go-nix/pkg/parser"
+	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
 // Eval evaluates a parsed expression to a value.

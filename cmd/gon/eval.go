@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/alecthomas/kingpin"
-	"github.com/orivej/go-nix/pkg/eval"
-	"github.com/orivej/go-nix/pkg/parser"
+	"github.com/aleksanaa/go-nix/pkg/eval"
+	"github.com/aleksanaa/go-nix/pkg/parser"
 )
 
 var (
