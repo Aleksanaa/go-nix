@@ -33,6 +33,17 @@ func (st *Symtab) Name(sym Sym) string {
 // TODO: Not capable of multiple (large?) files?
 var globalSymtab = NewSymtab()
 
+// Symbols the evaluator itself looks up.
+var (
+	symToString = Intern("__toString")
+	symOutPath  = Intern("outPath")
+	symRight    = Intern("right")
+	symWrong    = Intern("wrong")
+	symSuccess  = Intern("success")
+	symValue    = Intern("value")
+	symBuiltins = Intern("builtins")
+)
+
 func Intern(name string) Sym {
 	return globalSymtab.Intern(name)
 }

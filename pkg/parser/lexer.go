@@ -17,21 +17,6 @@ type lexResult struct {
 	comments []lexerToken
 }
 
-type LexPosition token.Position
-
-func (p *LexPosition) String() string {
-	return fmt.Sprintf("%s:%d:%d", p.Filename, p.Line, p.Column)
-}
-
-type LexerError struct {
-	Pos *LexPosition
-	Desc string
-}
-
-func (e *LexerError) Error() string {
-	return fmt.Sprintf("%s: syntax error: %s", e.Pos.String(), e.Desc)
-}
-
 var fileset = token.NewFileSet()
 
 func newLexResult(path string, size int) *lexResult {
@@ -55,17 +40,27 @@ func (r *lexResult) TokenString(i int) string {
 	return string(r.TokenBytes(i))
 }
 
-func (r *lexResult) TokenSymString(i int) string {
-	sym := r.tokens[i].sym
+// Last returns the index of the last token, or -1 when there is none.
+func (r *lexResult) Last() int {
+	return len(r.tokens) - 1
+}
+
+// symString names a lexer symbol the way the grammar spells it.
+func symString(sym int) string {
 	if sym >= yyPrivate-1 && sym < yyPrivate+len(yyToknames) {
 		return yyToknames[sym-yyPrivate+1]
 	}
 	return fmt.Sprintf("'%c'", sym)
 }
 
+func (r *lexResult) TokenSymString(i int) string {
+	return symString(r.tokens[i].sym)
+}
+
 func (r *lexResult) Errorf(format string) error {
-	last := len(r.tokens)-1
-	return &LexerError{Pos: r.TokenPos(last), Desc: fmt.Sprintf("%s %s", r.TokenSymString(last), format)}
+	last := r.Last()
+	pos := r.TokenPos(last)
+	return &LexerError{Pos: pos, Line: r.SourceLine(pos), Desc: fmt.Sprintf("%s %s", r.TokenSymString(last), format)}
 }
 
 func lex(data []byte, path string) (r *lexResult, err error) {

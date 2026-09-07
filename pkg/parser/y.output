@@ -1,0 +1,2394 @@
+
+state 0
+	$accept: .Main $end 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 2
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+	Main  goto 1
+
+state 1
+	$accept:  Main.$end 
+
+	$end  accept
+	.  error
+
+
+state 2
+	Main:  Expression.    (1)
+
+	.  reduce 1 (src line 38)
+
+
+state 3
+	Expression:  Op.    (2)
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	impl  shift 43
+	or  shift 42
+	and  shift 41
+	eq  shift 40
+	neq  shift 39
+	'<'  shift 38
+	'>'  shift 37
+	leq  shift 36
+	geq  shift 35
+	update  shift 34
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 2 (src line 43)
+
+
+state 4
+	Expression:  assert_.Expression ';' Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 44
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 5
+	Expression:  if_.Expression then Expression else_ Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 45
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 6
+	Expression:  let.Binds in Expression 
+	Binds: .    (58)
+
+	.  reduce 58 (src line 180)
+
+	Binds  goto 46
+
+state 7
+	Expression:  with.Expression ';' Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 47
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 8
+	Expression:  Function.    (7)
+
+	.  reduce 7 (src line 53)
+
+
+state 9
+	Apply:  Apply.Select 
+	Apply:  Apply.pipe_from Select 
+	Op:  Apply.    (31)
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	pipe_from  shift 49
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	.  reduce 31 (src line 117)
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 48
+
+state 10
+	Op:  '-'.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 50
+
+state 11
+	Op:  '!'.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 51
+
+state 12
+	Function:  argID.':' Expression 
+	Function:  argID.'@' argBracket ArgSet '}' ':' Expression 
+
+	':'  shift 52
+	'@'  shift 53
+	.  error
+
+
+state 13
+	Function:  argBracket.ArgSet '}' ':' Expression 
+	Function:  argBracket.ArgSet '}' '@' argID ':' Expression 
+	ArgSet: .    (68)
+
+	ellipsis  shift 56
+	id  shift 27
+	.  reduce 68 (src line 210)
+
+	ID  goto 57
+	ArgSet  goto 54
+	Arg  goto 55
+
+state 14
+	Apply:  Select.    (27)
+	Apply:  Select.pipe_into Apply 
+
+	pipe_into  shift 58
+	.  reduce 27 (src line 107)
+
+
+state 15
+	Select:  Atom.    (24)
+	Select:  Atom.'.' AttrPath 
+	Select:  Atom.'.' AttrPath or_ Select 
+
+	'.'  shift 59
+	.  reduce 24 (src line 99)
+
+
+state 16
+	Atom:  uri.    (13)
+
+	.  reduce 13 (src line 75)
+
+
+state 17
+	Atom:  path.    (14)
+
+	.  reduce 14 (src line 78)
+
+
+state 18
+	Atom:  float.    (15)
+
+	.  reduce 15 (src line 80)
+
+
+state 19
+	Atom:  int_.    (16)
+
+	.  reduce 16 (src line 82)
+
+
+state 20
+	Atom:  ID.    (17)
+
+	.  reduce 17 (src line 84)
+
+
+state 21
+	Atom:  '\"'.String '\"' 
+	String: .    (9)
+
+	.  reduce 9 (src line 61)
+
+	String  goto 60
+
+state 22
+	Atom:  ii.String ii 
+	String: .    (9)
+
+	.  reduce 9 (src line 61)
+
+	String  goto 61
+
+state 23
+	Atom:  '('.Expression ')' 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 62
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 24
+	Atom:  '['.List ']' 
+	List: .    (56)
+
+	.  reduce 56 (src line 173)
+
+	List  goto 63
+
+state 25
+	Atom:  '{'.Binds '}' 
+	Binds: .    (58)
+
+	.  reduce 58 (src line 180)
+
+	Binds  goto 64
+
+state 26
+	Atom:  rec.'{' Binds '}' 
+
+	'{'  shift 65
+	.  error
+
+
+state 27
+	ID:  id.    (12)
+
+	.  reduce 12 (src line 70)
+
+
+state 28
+	Op:  Op '?'.AttrPath 
+
+	or_  shift 69
+	interp  shift 72
+	id  shift 27
+	'"'  shift 71
+	.  error
+
+	Interp  goto 70
+	ID  goto 68
+	InterpID  goto 67
+	AttrPath  goto 66
+
+state 29
+	Op:  Op concat.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 73
+
+state 30
+	Op:  Op '/'.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 74
+
+state 31
+	Op:  Op '*'.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 75
+
+state 32
+	Op:  Op '-'.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 76
+
+state 33
+	Op:  Op '+'.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 77
+
+state 34
+	Op:  Op update.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 78
+
+state 35
+	Op:  Op geq.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 79
+
+state 36
+	Op:  Op leq.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 80
+
+state 37
+	Op:  Op '>'.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 81
+
+state 38
+	Op:  Op '<'.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 82
+
+state 39
+	Op:  Op neq.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 83
+
+state 40
+	Op:  Op eq.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 84
+
+state 41
+	Op:  Op and.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 85
+
+state 42
+	Op:  Op or.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 86
+
+state 43
+	Op:  Op impl.Op 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 87
+
+state 44
+	Expression:  assert_ Expression.';' Expression 
+
+	';'  shift 88
+	.  error
+
+
+state 45
+	Expression:  if_ Expression.then Expression else_ Expression 
+
+	then  shift 89
+	.  error
+
+
+state 46
+	Expression:  let Binds.in Expression 
+	Binds:  Binds.AttrPath '=' Expression ';' 
+	Binds:  Binds.inherit InheritList ';' 
+	Binds:  Binds.inherit '(' Expression ')' InheritList ';' 
+
+	in  shift 90
+	or_  shift 69
+	inherit  shift 92
+	interp  shift 72
+	id  shift 27
+	'"'  shift 71
+	.  error
+
+	Interp  goto 70
+	ID  goto 68
+	InterpID  goto 67
+	AttrPath  goto 91
+
+state 47
+	Expression:  with Expression.';' Expression 
+
+	';'  shift 93
+	.  error
+
+
+state 48
+	Apply:  Apply Select.    (28)
+
+	.  reduce 28 (src line 109)
+
+
+state 49
+	Apply:  Apply pipe_from.Select 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 94
+
+state 50
+	Op:  '-' Op.    (32)
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	.  reduce 32 (src line 119)
+
+
+state 51
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  '!' Op.    (39)
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 39 (src line 133)
+
+
+state 52
+	Function:  argID ':'.Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 95
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 53
+	Function:  argID '@'.argBracket ArgSet '}' ':' Expression 
+
+	argBracket  shift 96
+	.  error
+
+
+state 54
+	Function:  argBracket ArgSet.'}' ':' Expression 
+	Function:  argBracket ArgSet.'}' '@' argID ':' Expression 
+
+	'}'  shift 97
+	.  error
+
+
+state 55
+	ArgSet:  Arg.    (69)
+	ArgSet:  Arg.',' ArgSet 
+
+	','  shift 98
+	.  reduce 69 (src line 213)
+
+
+state 56
+	ArgSet:  ellipsis.    (70)
+
+	.  reduce 70 (src line 215)
+
+
+state 57
+	Arg:  ID.    (72)
+	Arg:  ID.'?' Expression 
+
+	'?'  shift 99
+	.  reduce 72 (src line 221)
+
+
+state 58
+	Apply:  Select pipe_into.Apply 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 100
+
+state 59
+	Select:  Atom '.'.AttrPath 
+	Select:  Atom '.'.AttrPath or_ Select 
+
+	or_  shift 69
+	interp  shift 72
+	id  shift 27
+	'"'  shift 71
+	.  error
+
+	Interp  goto 70
+	ID  goto 68
+	InterpID  goto 67
+	AttrPath  goto 101
+
+state 60
+	String:  String.text 
+	String:  String.Interp 
+	Atom:  '\"' String.'\"' 
+
+	interp  shift 72
+	text  shift 102
+	'"'  shift 104
+	.  error
+
+	Interp  goto 103
+
+state 61
+	String:  String.text 
+	String:  String.Interp 
+	Atom:  ii String.ii 
+
+	interp  shift 72
+	ii  shift 105
+	text  shift 102
+	.  error
+
+	Interp  goto 103
+
+state 62
+	Atom:  '(' Expression.')' 
+
+	')'  shift 106
+	.  error
+
+
+state 63
+	Atom:  '[' List.']' 
+	List:  List.Select 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	']'  shift 107
+	'{'  shift 25
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 108
+
+state 64
+	Atom:  '{' Binds.'}' 
+	Binds:  Binds.AttrPath '=' Expression ';' 
+	Binds:  Binds.inherit InheritList ';' 
+	Binds:  Binds.inherit '(' Expression ')' InheritList ';' 
+
+	or_  shift 69
+	inherit  shift 92
+	interp  shift 72
+	id  shift 27
+	'"'  shift 71
+	'}'  shift 109
+	.  error
+
+	Interp  goto 70
+	ID  goto 68
+	InterpID  goto 67
+	AttrPath  goto 91
+
+state 65
+	Atom:  rec '{'.Binds '}' 
+	Binds: .    (58)
+
+	.  reduce 58 (src line 180)
+
+	Binds  goto 110
+
+state 66
+	Op:  Op '?' AttrPath.    (33)
+	AttrPath:  AttrPath.'.' InterpID 
+
+	'.'  shift 111
+	.  reduce 33 (src line 121)
+
+
+state 67
+	AttrPath:  InterpID.    (54)
+
+	.  reduce 54 (src line 166)
+
+
+state 68
+	InterpID:  ID.    (50)
+
+	.  reduce 50 (src line 157)
+
+
+state 69
+	InterpID:  or_.    (51)
+
+	.  reduce 51 (src line 159)
+
+
+state 70
+	InterpID:  Interp.    (52)
+
+	.  reduce 52 (src line 161)
+
+
+state 71
+	InterpID:  '\"'.String '\"' 
+	String: .    (9)
+
+	.  reduce 9 (src line 61)
+
+	String  goto 112
+
+state 72
+	Interp:  interp.Expression '}' 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 113
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 73
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op concat Op.    (34)
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 34 (src line 123)
+
+
+state 74
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op '/' Op.    (35)
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 35 (src line 125)
+
+
+state 75
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op '*' Op.    (36)
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 36 (src line 127)
+
+
+state 76
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op '-' Op.    (37)
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 37 (src line 129)
+
+
+state 77
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op '+' Op.    (38)
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 38 (src line 131)
+
+
+state 78
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op update Op.    (40)
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	update  shift 34
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 40 (src line 135)
+
+
+state 79
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op geq Op.    (41)
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	update  shift 34
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 41 (src line 137)
+
+
+state 80
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op leq Op.    (42)
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	update  shift 34
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 42 (src line 139)
+
+
+state 81
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op '>' Op.    (43)
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	update  shift 34
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 43 (src line 141)
+
+
+state 82
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op '<' Op.    (44)
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	update  shift 34
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 44 (src line 143)
+
+
+state 83
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op neq Op.    (45)
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	eq  error
+	neq  error
+	'<'  shift 38
+	'>'  shift 37
+	leq  shift 36
+	geq  shift 35
+	update  shift 34
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 45 (src line 145)
+
+
+state 84
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op eq Op.    (46)
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	eq  error
+	neq  error
+	'<'  shift 38
+	'>'  shift 37
+	leq  shift 36
+	geq  shift 35
+	update  shift 34
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 46 (src line 147)
+
+
+state 85
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op and Op.    (47)
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+
+	eq  shift 40
+	neq  shift 39
+	'<'  shift 38
+	'>'  shift 37
+	leq  shift 36
+	geq  shift 35
+	update  shift 34
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 47 (src line 149)
+
+
+state 86
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op or Op.    (48)
+	Op:  Op.impl Op 
+
+	and  shift 41
+	eq  shift 40
+	neq  shift 39
+	'<'  shift 38
+	'>'  shift 37
+	leq  shift 36
+	geq  shift 35
+	update  shift 34
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 48 (src line 151)
+
+
+state 87
+	Op:  Op.'?' AttrPath 
+	Op:  Op.concat Op 
+	Op:  Op.'/' Op 
+	Op:  Op.'*' Op 
+	Op:  Op.'-' Op 
+	Op:  Op.'+' Op 
+	Op:  Op.update Op 
+	Op:  Op.geq Op 
+	Op:  Op.leq Op 
+	Op:  Op.'>' Op 
+	Op:  Op.'<' Op 
+	Op:  Op.neq Op 
+	Op:  Op.eq Op 
+	Op:  Op.and Op 
+	Op:  Op.or Op 
+	Op:  Op.impl Op 
+	Op:  Op impl Op.    (49)
+
+	impl  error
+	or  shift 42
+	and  shift 41
+	eq  shift 40
+	neq  shift 39
+	'<'  shift 38
+	'>'  shift 37
+	leq  shift 36
+	geq  shift 35
+	update  shift 34
+	'+'  shift 33
+	'-'  shift 32
+	'*'  shift 31
+	'/'  shift 30
+	concat  shift 29
+	'?'  shift 28
+	.  reduce 49 (src line 153)
+
+
+state 88
+	Expression:  assert_ Expression ';'.Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 114
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 89
+	Expression:  if_ Expression then.Expression else_ Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 115
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 90
+	Expression:  let Binds in.Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 116
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 91
+	AttrPath:  AttrPath.'.' InterpID 
+	Binds:  Binds AttrPath.'=' Expression ';' 
+
+	'.'  shift 111
+	'='  shift 117
+	.  error
+
+
+state 92
+	Binds:  Binds inherit.InheritList ';' 
+	Binds:  Binds inherit.'(' Expression ')' InheritList ';' 
+	InheritList: .    (62)
+
+	'('  shift 119
+	.  reduce 62 (src line 191)
+
+	InheritList  goto 118
+
+state 93
+	Expression:  with Expression ';'.Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 120
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 94
+	Apply:  Apply pipe_from Select.    (29)
+
+	.  reduce 29 (src line 111)
+
+
+state 95
+	Function:  argID ':' Expression.    (64)
+
+	.  reduce 64 (src line 199)
+
+
+state 96
+	Function:  argID '@' argBracket.ArgSet '}' ':' Expression 
+	ArgSet: .    (68)
+
+	ellipsis  shift 56
+	id  shift 27
+	.  reduce 68 (src line 210)
+
+	ID  goto 57
+	ArgSet  goto 121
+	Arg  goto 55
+
+state 97
+	Function:  argBracket ArgSet '}'.':' Expression 
+	Function:  argBracket ArgSet '}'.'@' argID ':' Expression 
+
+	':'  shift 122
+	'@'  shift 123
+	.  error
+
+
+state 98
+	ArgSet:  Arg ','.ArgSet 
+	ArgSet: .    (68)
+
+	ellipsis  shift 56
+	id  shift 27
+	.  reduce 68 (src line 210)
+
+	ID  goto 57
+	ArgSet  goto 124
+	Arg  goto 55
+
+state 99
+	Arg:  ID '?'.Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 125
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+100: shift/reduce conflict (shift 26(0), red'n 30(0)) on rec
+100: shift/reduce conflict (shift 22(0), red'n 30(0)) on ii
+100: shift/reduce conflict (shift 16(0), red'n 30(0)) on uri
+100: shift/reduce conflict (shift 17(0), red'n 30(0)) on path
+100: shift/reduce conflict (shift 18(0), red'n 30(0)) on float
+100: shift/reduce conflict (shift 19(0), red'n 30(0)) on int_
+100: shift/reduce conflict (shift 27(0), red'n 30(0)) on id
+100: shift/reduce conflict (shift 49(0), red'n 30(0)) on pipe_from
+100: shift/reduce conflict (shift 21(0), red'n 30(0)) on '"'
+100: shift/reduce conflict (shift 23(0), red'n 30(0)) on '('
+100: shift/reduce conflict (shift 24(0), red'n 30(0)) on '['
+100: shift/reduce conflict (shift 25(0), red'n 30(0)) on '{'
+state 100
+	Apply:  Apply.Select 
+	Apply:  Apply.pipe_from Select 
+	Apply:  Select pipe_into Apply.    (30)
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	pipe_from  shift 49
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	.  reduce 30 (src line 113)
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 48
+
+state 101
+	Select:  Atom '.' AttrPath.    (25)
+	Select:  Atom '.' AttrPath.or_ Select 
+	AttrPath:  AttrPath.'.' InterpID 
+
+	or_  shift 126
+	'.'  shift 111
+	.  reduce 25 (src line 101)
+
+
+state 102
+	String:  String text.    (10)
+
+	.  reduce 10 (src line 64)
+
+
+state 103
+	String:  String Interp.    (11)
+
+	.  reduce 11 (src line 66)
+
+
+state 104
+	Atom:  '\"' String '\"'.    (18)
+
+	.  reduce 18 (src line 85)
+
+
+state 105
+	Atom:  ii String ii.    (19)
+
+	.  reduce 19 (src line 87)
+
+
+state 106
+	Atom:  '(' Expression ')'.    (20)
+
+	.  reduce 20 (src line 89)
+
+
+state 107
+	Atom:  '[' List ']'.    (21)
+
+	.  reduce 21 (src line 91)
+
+
+state 108
+	List:  List Select.    (57)
+
+	.  reduce 57 (src line 176)
+
+
+state 109
+	Atom:  '{' Binds '}'.    (22)
+
+	.  reduce 22 (src line 93)
+
+
+state 110
+	Atom:  rec '{' Binds.'}' 
+	Binds:  Binds.AttrPath '=' Expression ';' 
+	Binds:  Binds.inherit InheritList ';' 
+	Binds:  Binds.inherit '(' Expression ')' InheritList ';' 
+
+	or_  shift 69
+	inherit  shift 92
+	interp  shift 72
+	id  shift 27
+	'"'  shift 71
+	'}'  shift 127
+	.  error
+
+	Interp  goto 70
+	ID  goto 68
+	InterpID  goto 67
+	AttrPath  goto 91
+
+state 111
+	AttrPath:  AttrPath '.'.InterpID 
+
+	or_  shift 69
+	interp  shift 72
+	id  shift 27
+	'"'  shift 71
+	.  error
+
+	Interp  goto 70
+	ID  goto 68
+	InterpID  goto 128
+
+state 112
+	String:  String.text 
+	String:  String.Interp 
+	InterpID:  '\"' String.'\"' 
+
+	interp  shift 72
+	text  shift 102
+	'"'  shift 129
+	.  error
+
+	Interp  goto 103
+
+state 113
+	Interp:  interp Expression.'}' 
+
+	'}'  shift 130
+	.  error
+
+
+state 114
+	Expression:  assert_ Expression ';' Expression.    (3)
+
+	.  reduce 3 (src line 45)
+
+
+state 115
+	Expression:  if_ Expression then Expression.else_ Expression 
+
+	else_  shift 131
+	.  error
+
+
+state 116
+	Expression:  let Binds in Expression.    (5)
+
+	.  reduce 5 (src line 49)
+
+
+state 117
+	Binds:  Binds AttrPath '='.Expression ';' 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 132
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 118
+	Binds:  Binds inherit InheritList.';' 
+	InheritList:  InheritList.InterpID 
+
+	or_  shift 69
+	interp  shift 72
+	id  shift 27
+	';'  shift 133
+	'"'  shift 71
+	.  error
+
+	Interp  goto 70
+	ID  goto 68
+	InterpID  goto 134
+
+state 119
+	Binds:  Binds inherit '('.Expression ')' InheritList ';' 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 135
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 120
+	Expression:  with Expression ';' Expression.    (6)
+
+	.  reduce 6 (src line 51)
+
+
+state 121
+	Function:  argID '@' argBracket ArgSet.'}' ':' Expression 
+
+	'}'  shift 136
+	.  error
+
+
+state 122
+	Function:  argBracket ArgSet '}' ':'.Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 137
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 123
+	Function:  argBracket ArgSet '}' '@'.argID ':' Expression 
+
+	argID  shift 138
+	.  error
+
+
+state 124
+	ArgSet:  Arg ',' ArgSet.    (71)
+
+	.  reduce 71 (src line 217)
+
+
+state 125
+	Arg:  ID '?' Expression.    (73)
+
+	.  reduce 73 (src line 224)
+
+
+state 126
+	Select:  Atom '.' AttrPath or_.Select 
+
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	.  error
+
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 139
+
+state 127
+	Atom:  rec '{' Binds '}'.    (23)
+
+	.  reduce 23 (src line 95)
+
+
+state 128
+	AttrPath:  AttrPath '.' InterpID.    (55)
+
+	.  reduce 55 (src line 169)
+
+
+state 129
+	InterpID:  '\"' String '\"'.    (53)
+
+	.  reduce 53 (src line 162)
+
+
+state 130
+	Interp:  interp Expression '}'.    (8)
+
+	.  reduce 8 (src line 56)
+
+
+state 131
+	Expression:  if_ Expression then Expression else_.Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 140
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 132
+	Binds:  Binds AttrPath '=' Expression.';' 
+
+	';'  shift 141
+	.  error
+
+
+state 133
+	Binds:  Binds inherit InheritList ';'.    (60)
+
+	.  reduce 60 (src line 185)
+
+
+state 134
+	InheritList:  InheritList InterpID.    (63)
+
+	.  reduce 63 (src line 194)
+
+
+state 135
+	Binds:  Binds inherit '(' Expression.')' InheritList ';' 
+
+	')'  shift 142
+	.  error
+
+
+state 136
+	Function:  argID '@' argBracket ArgSet '}'.':' Expression 
+
+	':'  shift 143
+	.  error
+
+
+state 137
+	Function:  argBracket ArgSet '}' ':' Expression.    (65)
+
+	.  reduce 65 (src line 202)
+
+
+state 138
+	Function:  argBracket ArgSet '}' '@' argID.':' Expression 
+
+	':'  shift 144
+	.  error
+
+
+state 139
+	Select:  Atom '.' AttrPath or_ Select.    (26)
+
+	.  reduce 26 (src line 103)
+
+
+state 140
+	Expression:  if_ Expression then Expression else_ Expression.    (4)
+
+	.  reduce 4 (src line 47)
+
+
+state 141
+	Binds:  Binds AttrPath '=' Expression ';'.    (59)
+
+	.  reduce 59 (src line 183)
+
+
+state 142
+	Binds:  Binds inherit '(' Expression ')'.InheritList ';' 
+	InheritList: .    (62)
+
+	.  reduce 62 (src line 191)
+
+	InheritList  goto 145
+
+state 143
+	Function:  argID '@' argBracket ArgSet '}' ':'.Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 146
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 144
+	Function:  argBracket ArgSet '}' '@' argID ':'.Expression 
+
+	assert_  shift 4
+	if_  shift 5
+	let  shift 6
+	with  shift 7
+	rec  shift 26
+	ii  shift 22
+	uri  shift 16
+	path  shift 17
+	float  shift 18
+	int_  shift 19
+	id  shift 27
+	argID  shift 12
+	argBracket  shift 13
+	'"'  shift 21
+	'('  shift 23
+	'['  shift 24
+	'{'  shift 25
+	'!'  shift 11
+	'-'  shift 10
+	.  error
+
+	Expression  goto 147
+	ID  goto 20
+	Atom  goto 15
+	Select  goto 14
+	Apply  goto 9
+	Op  goto 3
+	Function  goto 8
+
+state 145
+	Binds:  Binds inherit '(' Expression ')' InheritList.';' 
+	InheritList:  InheritList.InterpID 
+
+	or_  shift 69
+	interp  shift 72
+	id  shift 27
+	';'  shift 148
+	'"'  shift 71
+	.  error
+
+	Interp  goto 70
+	ID  goto 68
+	InterpID  goto 134
+
+state 146
+	Function:  argID '@' argBracket ArgSet '}' ':' Expression.    (66)
+
+	.  reduce 66 (src line 204)
+
+
+state 147
+	Function:  argBracket ArgSet '}' '@' argID ':' Expression.    (67)
+
+	.  reduce 67 (src line 206)
+
+
+state 148
+	Binds:  Binds inherit '(' Expression ')' InheritList ';'.    (61)
+
+	.  reduce 61 (src line 187)
+
+
+59 terminals, 18 nonterminals
+74 grammar rules, 149/16000 states
+12 shift/reduce, 0 reduce/reduce conflicts reported
+67 working sets used
+memory: parser 308/240000
+123 extra closures
+851 shift entries, 6 exceptions
+83 goto entries
+198 entries saved by goto default
+Optimizer space used: output 381/240000
+381 table entries, 71 zero
+maximum spread: 58, maximum offset: 145

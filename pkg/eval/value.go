@@ -1,500 +1,165 @@
 package eval
 
-// TODO: InterpString
+import "strings"
 
-import (
-	"fmt"
-	p "github.com/orivej/go-nix/pkg/parser"
-	"path"
-	"strings"
-)
-
+// NixValue is an evaluated Nix value.
 type NixValue interface {
+	// Print renders the value, expanding nested lists and sets while recurse
+	// is positive and abbreviating them as "[ ... ]" or "{ ... }" beyond that.
 	Print(recurse int) string
+	// Compare implements Nix equality: structural for data, always false for
+	// functions.
 	Compare(val NixValue) bool
 }
 
-type NixValueWithToString interface {
-	NixValue
-	ToString() string
-}
-
-type NixInt int64
-
-func (i NixInt) Print(recurse int) string {
-	return fmt.Sprintf("%d", i)
-}
-
-func (i NixInt) ToString() string {
-	return fmt.Sprintf("%d", i)
-}
-
-func (i NixInt) Compare(val NixValue) bool {
-	if i_, ok := val.(NixInt); ok {
-		return i == i_
-	} else if f_, ok := val.(NixFloat); ok {
-		return NixFloat(i).Compare(f_)
-	} else {
-		return false
+// TypeName is the name builtins.typeOf gives to a value.
+func TypeName(val NixValue) string {
+	switch val.(type) {
+	case NixInt:
+		return "int"
+	case NixFloat:
+		return "float"
+	case NixBool:
+		return "bool"
+	case *NixNull:
+		return "null"
+	case NixList:
+		return "list"
+	case NixSet:
+		return "set"
+	case *NixPath:
+		return "path"
+	case *NixString:
+		return "string"
+	case NixLambda:
+		return "lambda"
+	case nil:
+		return "unevaluated"
 	}
+	return "unknown"
 }
 
-type NixFloat float64
-
-func (f NixFloat) Print(recurse int) string {
-	return fmt.Sprintf("%.6g", f)
-}
-
-func (f NixFloat) ToString() string {
-	return fmt.Sprintf("%.6f", f)
-}
-
-func (f NixFloat) Compare(val NixValue) bool {
-	if f_, ok := val.(NixFloat); ok {
-		return f.ToString() == f_.ToString()
-	} else if i_, ok := val.(NixInt); ok {
-		return NixFloat(i_).Compare(f)
-	} else {
-		return false
+// anTypeName names a value the way error messages spell it, as in
+// "value is a list while a set was expected".
+func anTypeName(val NixValue) string {
+	switch val.(type) {
+	case NixInt:
+		return "an integer"
+	case NixFloat:
+		return "a float"
+	case NixBool:
+		return "a Boolean"
+	case *NixNull:
+		return "null"
+	case NixList:
+		return "a list"
+	case NixSet:
+		return "a set"
+	case *NixPath:
+		return "a path"
+	case *NixString:
+		return "a string"
+	case NixLambda:
+		return "a function"
+	case nil:
+		return "an unevaluated expression"
 	}
+	return "of an unknown type"
+}
+
+// assert returns val as a T, reporting a Nix type error if it is not one.
+func assertType[T NixValue](val NixValue, expected string) T {
+	if t, ok := val.(T); ok {
+		return t
+	}
+	throwf(ErrType, "value is %s while %s was expected", anTypeName(val), expected)
+	var zero T
+	return zero
+}
+
+func assertBool(val NixValue) NixBool      { return assertType[NixBool](val, "a Boolean") }
+func assertInt(val NixValue) NixInt        { return assertType[NixInt](val, "an integer") }
+func assertList(val NixValue) NixList      { return assertType[NixList](val, "a list") }
+func assertSet(val NixValue) NixSet        { return assertType[NixSet](val, "a set") }
+func assertString(val NixValue) *NixString { return assertType[*NixString](val, "a string") }
+func assertLambda(val NixValue) NixLambda  { return assertType[NixLambda](val, "a function") }
+
+// NixNull is the null value. It is a pointer type so that a nil NixValue
+// (an unevaluated or missing value) stays distinguishable from Nix null.
+type NixNull struct{}
+
+var Null = &NixNull{}
+
+func (n *NixNull) Print(recurse int) string { return "null" }
+
+func (n *NixNull) Compare(val NixValue) bool {
+	_, ok := val.(*NixNull)
+	return ok
 }
 
 type NixBool bool
 
+const (
+	True  = NixBool(true)
+	False = NixBool(false)
+)
+
 func (b NixBool) Print(recurse int) string {
 	if b {
 		return "true"
-	} else {
-		return "false"
 	}
-}
-
-func (b NixBool) ToString() string {
-	if b {
-		return "1"
-	} else {
-		return ""
-	}
+	return "false"
 }
 
 func (b NixBool) Compare(val NixValue) bool {
-	if b_, ok := val.(NixBool); ok {
-		return b == b_
-	} else {
-		return false
-	}
+	b2, ok := val.(NixBool)
+	return ok && b == b2
 }
 
-// differentiate from the default nil
-type NixNull struct{}
-
-func (n *NixNull) Print(recurse int) string {
-	return "null"
-}
-
-func (n *NixNull) ToString() string {
-	return ""
-}
-
-func (n *NixNull) Compare(val NixValue) bool {
-	if _, ok := val.(*NixNull); ok {
-		return true
-	} else {
-		return false
-	}
-}
-
-type NixList []*Expression
-
-func (l NixList) Print(recurse int) string {
-	if recurse == 0 {
-		return "[ ... ]"
-	} else {
-		last := len(l) + 1
-		parts := make([]string, last+1)
-		parts[0], parts[last] = "[", "]"
-		for i, x := range l {
-			parts[i+1] = x.Eval().Print(recurse - 1)
-		}
-		return strings.Join(parts, " ")
-	}
-}
-
-func (l NixList) ToString() string {
-	var result string
-	for n, elem := range l {
-		ts, ok := elem.Eval().(NixValueWithToString)
+// CompareOrder orders two values as Nix's relational operators do: numbers
+// numerically, strings and paths lexicographically, and lists element by
+// element. It reports -1, 0 or 1, and raises a type error for values Nix
+// refuses to order.
+func CompareOrder(a, b NixValue) int {
+	switch lhs := a.(type) {
+	case NixInt, NixFloat:
+		x, _ := toFloat(lhs)
+		y, ok := toFloat(b)
 		if !ok {
-			panic("cannot convert list element to string")
+			break
 		}
-		if n == 0 {
-			result = ts.ToString()
-		} else {
-			result += " " + ts.ToString()
+		switch {
+		case x < y:
+			return -1
+		case x > y:
+			return 1
 		}
-	}
-	return result
-}
+		return 0
 
-func (list NixList) Concat(newList NixList) NixList {
-	return append(list, newList...)
-}
-
-func (l NixList) Compare(val NixValue) bool {
-	if l_, ok := val.(NixList); ok {
-		if len(l) != len(l_) {
-			return false
-		}
-		for i, v := range l {
-			if !l_[i].Eval().Compare(v.Eval()) {
-				return false
-			}
-		}
-		return true
-	} else {
-		return false
-	}
-}
-
-type NixSet map[Sym]*Expression
-
-func (s NixSet) Iterator() []Sym {
-	keys := make([]Sym, 0, len(s))
-	for sym, _ := range s {
-		keys = append(keys, sym)
-	}
-	SortSym(keys)
-	return keys
-}
-
-func (s NixSet) Print(recurse int) string {
-	if recurse == 0 {
-		return "{ ... }"
-	} else {
-		length := len(s)
-		parts := make([]string, length+2)
-		parts[0], parts[length+1] = "{", "}"
-		for i, key := range s.Iterator() {
-			parts[i+1] = fmt.Sprintf("%s = %s;", key.String(), s[key].Eval().Print(recurse-1))
-		}
-		return strings.Join(parts, " ")
-	}
-}
-
-func (s NixSet) ToString() string {
-	if toFuncExpr, exists := s[Intern("__toString")]; exists {
-		toFunc, ok := toFuncExpr.Eval().(NixLambda)
-		if !ok {
-			panic(fmt.Sprintln("value of __toString attribute is not a function or primop"))
-		}
-		sExpr := &Expression{Value: s}
-		ts, ok := toFunc.Apply(sExpr).(NixValueWithToString)
-		if !ok {
-			panic(fmt.Sprintln("cannot convert output of __toString to string"))
-		}
-		return ts.ToString()
-	} else if outPath, exists := s[Intern("outPath")]; exists {
-		if ts, ok := outPath.Eval().(NixValueWithToString); ok {
-			return ts.ToString()
-		}
-	}
-	panic(fmt.Sprintln("unable to convert set to string"))
-}
-
-func (set NixSet) Bind1(sym Sym, x *Expression) {
-	if _, ok := set[sym]; ok {
-		throw(fmt.Errorf("%v is already defined", sym))
-	}
-	set[sym] = x
-}
-
-func (set NixSet) Bind(syms []Sym, x *Expression) {
-	last := len(syms) - 1
-	for _, sym := range syms[:last] {
-		if subset, ok := set[sym]; ok {
-			set = subset.Value.(NixSet)
-		} else {
-			subset := NixSet{}
-			set[sym] = &Expression{Value: subset}
-			set = subset
-		}
-	}
-	set.Bind1(syms[last], x)
-}
-
-func (set NixSet) Update(newSet NixSet) NixSet {
-	result := make(NixSet, len(set))
-	for sym, expr := range set {
-		result[sym] = expr
-	}
-	for sym, expr := range newSet {
-		result[sym] = expr
-	}
-	return result
-}
-
-func (s NixSet) Compare(val NixValue) bool {
-	if s_, ok := val.(NixSet); ok {
-		if len(s) != len(s_) {
-			return false
-		}
-		for i, v := range s {
-			if !s_[i].Eval().Compare(v.Eval()) {
-				return false
-			}
-		}
-		return true
-	} else {
-		return false
-	}
-}
-
-type NixPath struct {
-	Root string
-	Path string
-}
-
-func (p *NixPath) Print(recurse int) string {
-	return path.Join(p.Root, p.Path)
-}
-
-func (p *NixPath) ToString() string {
-	return path.Join(p.Root, p.Path)
-}
-
-func (p *NixPath) Compare(val NixValue) bool {
-	if p_, ok := val.(*NixPath); ok {
-		return p.ToString() == p_.ToString()
-	} else {
-		return false
-	}
-}
-
-type NixString struct {
-	Content string
-	Context []*Derivation
-	// string "..." is impure because it
-	// contains "2.18" which is reference
-	// to Nix version
-	// { "2.18": "reference to Nix version" }
-	Impurities map[string]string
-}
-
-func (str *NixString) Print(recurse int) string {
-	result := strings.ReplaceAll(str.Content, "\n", `\n`)
-	result = strings.ReplaceAll(result, `"`, `\"`)
-	return `"` + result + `"`
-}
-
-func (str *NixString) ToString() string {
-	return str.Content
-}
-
-func (str *NixString) Concat(newStr *NixString) *NixString {
-	impurities := make(map[string]string, len(str.Impurities))
-	for name, reason := range str.Impurities {
-		impurities[name] = reason
-	}
-	for name, reason := range newStr.Impurities {
-		impurities[name] = reason
-	}
-	context := append(str.Context, newStr.Context...)
-	return &NixString{Content: str.Content + newStr.Content, Context: context, Impurities: impurities}
-}
-
-func (str *NixString) Compare(val NixValue) bool {
-	if str_, ok := val.(*NixString); ok {
-		return str.Content == str_.Content
-	} else {
-		return false
-	}
-}
-
-type NixLambda interface {
-	NixValue
-	Apply(*Expression) NixValue
-}
-
-type NixExprLambda struct {
-	// TODO: position
-	Arg         Sym
-	HasArg      bool
-	Formal      map[Sym]*p.Node
-	HasFormal   bool
-	HasEllipsis bool
-	Body        *p.Node
-	Expression  *Expression
-}
-
-func (f *NixExprLambda) Print(recurse int) string {
-	return "«lambda»"
-}
-
-func (f *NixExprLambda) Compare(val NixValue) bool {
-	return false
-}
-
-func (f *NixExprLambda) Apply(expr *Expression) NixValue {
-	set := make(NixSet, 1)
-	fnExpr := f.Expression
-	scope := fnExpr.Scope.Subscope(set, false)
-	// TODO: order wrong?
-	if f.HasArg {
-		set[f.Arg] = expr
-	}
-	if f.HasFormal {
-		argSet, ok := expr.Eval().(NixSet)
-		if !ok {
-			panic(fmt.Sprintln("calling a function with formal but argument is not a set"))
-		}
-		for sym, exprNode := range f.Formal {
-			if f.HasArg && sym == f.Arg {
-				panic(fmt.Sprintln("duplicate formal and function argument"))
-			}
-			if exprNode != nil {
-				set[sym] = fnExpr.WithScoped(exprNode, scope)
-			}
-		}
-		for sym, expr := range argSet {
-			if _, exists := f.Formal[sym]; exists {
-				set[sym] = expr
-			} else if !f.HasEllipsis {
-				panic(fmt.Sprintln("set has more than enough formals to call a function"))
-			}
-		}
-	}
-	// TODO: Not so lazy?
-	return fnExpr.WithScoped(f.Body, scope).Eval()
-}
-
-// Builtin functions
-type NixPrimop struct {
-	Func   func(...*Expression) NixValue
-	Doc    string
-	Sym    Sym
-	ArgNum int
-}
-
-func (p *NixPrimop) Print(recurse int) string {
-	return fmt.Sprintf("«primop %s»", p.Sym.String())
-}
-
-func (p *NixPrimop) Compare(val NixValue) bool {
-	return false
-}
-
-func (p *NixPrimop) Apply(expr *Expression) NixValue {
-	if p.ArgNum == 1 {
-		return p.Func(expr)
-	} else {
-		queue := make([]*Expression, 0, p.ArgNum)
-		queue = append(queue, expr)
-		return &NixPartialPrimop{Primop: p, ArgQueue: queue}
-	}
-}
-
-type NixPartialPrimop struct {
-	Primop   *NixPrimop
-	ArgQueue []*Expression
-}
-
-func (pp *NixPartialPrimop) Print(recurse int) string {
-	return fmt.Sprintf("«primop %s, with %d/%d argument»", pp.Primop.Sym.String(), len(pp.ArgQueue), pp.Primop.ArgNum)
-}
-
-func (pp *NixPartialPrimop) Compare(val NixValue) bool {
-	return false
-}
-
-func (pp *NixPartialPrimop) Apply(expr *Expression) NixValue {
-	ppNew := *pp
-	ppNew.ArgQueue = append(pp.ArgQueue, expr)
-	if len(ppNew.ArgQueue) == ppNew.Primop.ArgNum {
-		return ppNew.Primop.Func(ppNew.ArgQueue...)
-	} else {
-		return &ppNew
-	}
-}
-
-func InterpString(val NixValue) string {
-	switch v := val.(type) {
 	case *NixString:
-		return v.ToString()
+		if rhs, ok := b.(*NixString); ok {
+			return strings.Compare(lhs.Content, rhs.Content)
+		}
+
 	case *NixPath:
-		return v.ToString()
-	case NixSet:
-		return v.ToString()
-	default:
-		panic(fmt.Errorf("can not coerce %v to a string", val))
-	}
-}
-
-type NixNumber interface {
-	NixInt | NixFloat
-}
-
-func numCalc[T NixNumber](num1, num2 T, op p.NodeType) NixValue {
-	switch op {
-	case p.OpAddNode:
-		return NixValue(num1 + num2)
-	case p.OpReduceNode:
-		return NixValue(num1 - num2)
-	case p.OpMultiplyNode:
-		return NixValue(num1 * num2)
-	case p.OpDivideNode:
-		return NixValue(num1 / num2)
-	case p.OpGreaterNode:
-		return NixBool(num1 > num2)
-	case p.OpLessNode:
-		return NixBool(num1 < num2)
-	case p.OpGeqNode:
-		return NixBool(num1 >= num2)
-	case p.OpLeqNode:
-		return NixBool(num1 <= num2)
-	default:
-		panic(fmt.Sprintln("wrong operation"))
-	}
-}
-
-func NumCalc(val1 NixValue, val2 NixValue, op p.NodeType) NixValue {
-	int1, ok1 := val1.(NixInt)
-	int2, ok2 := val2.(NixInt)
-	if ok1 && ok2 {
-		return numCalc(int1, int2, op)
-	} else {
-		var float1, float2 NixFloat
-		var ok1_, ok2_ bool
-		if ok1 {
-			float1 = NixFloat(int1)
-			ok1_ = true
-		} else {
-			float1, ok1_ = val1.(NixFloat)
+		if rhs, ok := b.(*NixPath); ok {
+			return strings.Compare(lhs.String(), rhs.String())
 		}
-		if ok2 {
-			float2 = NixFloat(int2)
-			ok2_ = true
-		} else {
-			float2, ok2_ = val2.(NixFloat)
-		}
-		if ok1_ && ok2_ {
-			return numCalc(float1, float2, op)
-		} else {
-			panic(fmt.Sprintln("Cannot perform calculation"))
-		}
-	}
-}
 
-func BinCalc(val1 NixValue, val2 NixValue, op p.NodeType) NixBool {
-	b1 := AssertType[NixBool](val1)
-	b2 := AssertType[NixBool](val2)
-	switch op {
-	case p.OpAndNode:
-		return NixBool(b1 && b2)
-	case p.OpOrNode:
-		return NixBool(b1 || b2)
-	case p.OpImplNode:
-		return NixBool(!b1 || b2)
-	default:
-		panic(fmt.Sprintln("wrong operation"))
+	case NixList:
+		rhs, ok := b.(NixList)
+		if !ok {
+			break
+		}
+		// Lexicographic: the first differing element decides, and a prefix
+		// sorts before the longer list.
+		for i := 0; i < len(lhs) && i < len(rhs); i++ {
+			if c := CompareOrder(lhs[i].Eval(), rhs[i].Eval()); c != 0 {
+				return c
+			}
+		}
+		return sign(len(lhs) - len(rhs))
 	}
+	throwf(ErrType, "cannot compare %s with %s", anTypeName(a), anTypeName(b))
+	return 0
 }

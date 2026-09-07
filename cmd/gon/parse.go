@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/alecthomas/kingpin"
-	"github.com/orivej/e"
 	"github.com/orivej/go-nix/pkg/parser"
 )
 
@@ -15,11 +14,11 @@ var (
 )
 
 var parseMain = register("parse", func() {
-	f := parser.ParseString
+	parse := parser.ParseString
 	if *parseFile {
-		f = parser.ParseFile
+		parse = parser.ParseFile
 	}
-	pr, err := f(*parseExprArg)
-	e.Exit(err)
+	pr, err := parse(*parseExprArg)
+	fail(err)
 	fmt.Println(pr.LispResult())
 })

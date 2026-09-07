@@ -3,10 +3,6 @@ package parser
 //go:generate goyacc nix.y
 //go:generate sed "/yyS :=/a\\\tp := yylex.(*Parser)" -i y.go
 
-import (
-	"fmt"
-)
-
 type Node struct {
 	Type   NodeType
 	Tokens []int
@@ -16,29 +12,6 @@ type Node struct {
 }
 
 const nodesBlock = 1024
-
-type ParserError struct {
-	Pos *LexPosition
-	Desc string
-}
-
-func (e *ParserError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Pos.String(), e.Desc)
-}
-
-type ParserErrors []*ParserError
-
-func (es ParserErrors) Error() string {
-	var error string
-	for i, e := range es {
-		if i == 0 {
-			error = e.Error()
-		} else {
-			error = "\n" + e.Error()
-		}
-	}
-	return error
-}
 
 type Parser struct {
 	*lexResult
@@ -66,7 +39,8 @@ func (p *Parser) Lex(lval *yySymType) int {
 }
 
 func (p *Parser) Error(s string) {
-	err := &ParserError{Pos: p.TokenPos(p.prev), Desc: s}
+	pos := p.TokenPos(p.prev)
+	err := &ParserError{Pos: pos, Line: p.SourceLine(pos), Desc: s}
 	p.errors = append(p.errors, err)
 }
 

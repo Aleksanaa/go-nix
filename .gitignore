@@ -1,5 +1,4 @@
-/pkg/parser/y.output
-/pkg/parser/y.go
-/pkg/parser/machine.go
-/gon
+cmd/gon/gon
+result
+result-bin
 /.direnv

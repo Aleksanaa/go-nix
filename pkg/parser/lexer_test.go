@@ -7,7 +7,7 @@ import (
 
 	"github.com/alecthomas/assert"
 	"github.com/orivej/e"
-	"github.com/orivej/go-nix/nix/util"
+	"github.com/orivej/go-nix/pkg/util"
 )
 
 func TestLexOne(t *testing.T) {

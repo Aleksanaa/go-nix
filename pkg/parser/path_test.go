@@ -11,8 +11,12 @@ var nixpkgs = ResolvePath("nixpkgs")
 var attrsets = ResolvePath("nixpkgs/lib/attrsets.nix")
 
 func skipWithoutNixPath(t *testing.T) {
+	t.Helper()
 	if len(NixPath) == 0 {
 		t.Skip("NIX_PATH is not set")
+	}
+	if nixpkgs == "" || attrsets == "" {
+		t.Skip("nixpkgs is not in NIX_PATH")
 	}
 }
 
