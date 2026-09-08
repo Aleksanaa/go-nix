@@ -44,7 +44,12 @@ func (p *Parser) Lex(lval *yySymType) int {
 }
 
 func (p *Parser) Error(s string) {
-	pos := p.TokenPos(p.prev)
+	// prev is still -1 when the parser fails without having consumed a token,
+	// which is what an empty input does.
+	pos := p.StartPos()
+	if p.prev >= 0 {
+		pos = p.TokenPos(p.prev)
+	}
 	err := &ParserError{Pos: pos, Line: p.SourceLine(pos), Desc: s}
 	p.errors = append(p.errors, err)
 }

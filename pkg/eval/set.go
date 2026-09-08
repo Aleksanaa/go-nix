@@ -95,3 +95,16 @@ func symNames(syms []Sym) []string {
 	}
 	return names
 }
+
+// NewSet returns an empty attribute set with room for n attributes.
+func NewSet(n int) NixSet { return make(NixSet, n) }
+
+// Get returns the attribute named sym, unevaluated.
+func (s NixSet) Get(sym Sym) (*Expression, bool) {
+	x, ok := s[sym]
+	return x, ok
+}
+
+// Set binds sym, replacing whatever was there. It is Bind1 without the
+// redefinition check, for the REPL, where rebinding a name is the point.
+func (s NixSet) Set(sym Sym, x *Expression) { s[sym] = x }

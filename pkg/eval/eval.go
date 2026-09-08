@@ -20,11 +20,24 @@ import (
 // contains, as Print does, can fail in turn, so use Print rather than calling
 // the method directly.
 func Eval(pr *p.Parser) (NixValue, error) {
-	return catching(func() NixValue {
-		x := newExpr()
-		x.Scope, x.Node = DefaultScope.ForFile(pr), pr.Result
-		return x.Eval()
-	})
+	return EvalIn(DefaultScope, pr)
+}
+
+// EvalIn evaluates a parsed expression in a scope other than the default one.
+// It is how the REPL evaluates an entry, so that the entry sees the names the
+// session has bound so far.
+func EvalIn(scope *Scope, pr *p.Parser) (NixValue, error) {
+	return catching(func() NixValue { return Delay(scope, pr).Eval() })
+}
+
+// Delay returns a parsed expression as an unforced thunk in a scope.
+//
+// The REPL binds names to these rather than to values, which is what makes
+// `x = <something that fails>` legal until x is used, just as a `let` is.
+func Delay(scope *Scope, pr *p.Parser) *Expression {
+	x := newExpr()
+	x.Scope, x.Node = scope.ForFile(pr), pr.Result
+	return x
 }
 
 // Print renders a value, forcing it down to the given depth. A negative depth

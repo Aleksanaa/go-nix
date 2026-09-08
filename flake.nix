@@ -24,7 +24,7 @@
             go generate ./...
           '';
 
-          vendorHash = "sha256-dE3YS68DliQVjYLhRCuNRtRzk5ODU4P3vbySN1wZYQg=";
+          vendorHash = "sha256-mZX3w8jNGnAymabp84W3RLzsoCoHef0AT3mBziFe0bQ=";
 
           proxyVendor = true;
 

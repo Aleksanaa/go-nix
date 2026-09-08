@@ -31,6 +31,14 @@ func (r *lexResult) TokenPos(i int) *LexPosition {
 	return &p
 }
 
+// StartPos is the very beginning of the input. It is where a failure with no
+// token to blame is reported, which is what an empty input produces: the
+// parser rejects it before it has consumed anything.
+func (r *lexResult) StartPos() *LexPosition {
+	p := LexPosition(r.file.Position(r.file.Pos(0)))
+	return &p
+}
+
 func (r *lexResult) TokenBytes(i int) []byte {
 	tok := r.tokens[i]
 	return r.data[tok.pos:tok.end]

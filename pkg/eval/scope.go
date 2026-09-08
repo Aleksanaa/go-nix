@@ -112,3 +112,29 @@ func (scope *Scope) attrSym(n *p.Node) Sym {
 		return 0
 	}
 }
+
+// Names lists every name this scope makes visible, nearest binding first and
+// without repetition.
+//
+// It exists for the REPL's completion, which is outside this package and so
+// has no other way to see what a chain of scopes holds.
+func (scope *Scope) Names() []string {
+	var names []string
+	seen := map[Sym]bool{}
+	add := func(sym Sym) {
+		if !seen[sym] {
+			seen[sym] = true
+			names = append(names, sym.String())
+		}
+	}
+	for s := scope; s != nil; s = s.Parent {
+		if s.expr != nil {
+			add(s.sym)
+			continue
+		}
+		for _, sym := range s.Binds.Keys() {
+			add(sym)
+		}
+	}
+	return names
+}
