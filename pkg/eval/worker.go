@@ -1,5 +1,7 @@
 package eval
 
+import "unsafe"
+
 // A worker is the state an evaluation keeps that belongs to whoever is doing
 // the evaluating rather than to the expressions being evaluated: the stack a
 // backtrace is read from, and the blocks new expressions and scopes are handed
@@ -57,6 +59,13 @@ type worker struct {
 	memoFile *file
 	memo     []lookupMemo
 	memos    map[*file][]lookupMemo
+
+	// seen is the sets and lists already printed in the current Print
+	// traversal, so that a value that refers back to itself — a derivation's
+	// `out`, which is the derivation again — is reported as "«repeated»"
+	// rather than recursing without end. It is only kept for a full print,
+	// which is the one traversal the depth bound cannot stop; see Print.
+	seen map[unsafe.Pointer]bool
 }
 
 // w is the worker every evaluation runs on. Phase D replaces it with one per

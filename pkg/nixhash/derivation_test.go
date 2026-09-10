@@ -1,6 +1,9 @@
 package nixhash
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDerivationHashing(t *testing.T) {
 	dep := &Derivation{
@@ -79,5 +82,28 @@ func TestDerivationHashing(t *testing.T) {
 	}
 	if want := "/nix/store/dgxd7gwfdzrvcqv4yw16cbbk7cg9b84p-top.drv"; top.DrvPath() != want {
 		t.Errorf("top drvPath = %s, want %s", top.DrvPath(), want)
+	}
+}
+
+// TestDerivationJSONEscaping pins that the derivation JSON does not HTML-escape
+// characters like ">", which Nix writes verbatim.
+func TestDerivationJSONEscaping(t *testing.T) {
+	d := &Derivation{
+		Name:    "x",
+		System:  "x86_64-linux",
+		Builder: "/bin/sh",
+		Args:    []string{"-c", "a > b"},
+		Outputs: map[string]Output{"out": {Path: "/nix/store/abcdef-x"}},
+		Env:     map[string]string{"builder": "/bin/sh", "name": "x", "out": "/nix/store/abcdef-x", "system": "x86_64-linux"},
+	}
+	b, err := d.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `\u003e`) {
+		t.Errorf("JSON HTML-escaped '>': %s", b)
+	}
+	if !strings.Contains(string(b), `a > b`) {
+		t.Errorf("JSON lost '>': %s", b)
 	}
 }

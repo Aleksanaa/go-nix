@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unsafe"
 )
 
 // AttrSet is an attribute set: the names it binds, each with the expression
@@ -157,6 +158,13 @@ func (s *AttrSet) Keys() []Sym {
 func (s *AttrSet) Print(w *worker, recurse int) string {
 	if recurse == 0 {
 		return "{ ... }"
+	}
+	if w.seen != nil {
+		p := unsafe.Pointer(s)
+		if w.seen[p] {
+			return "«repeated»"
+		}
+		w.seen[p] = true
 	}
 	parts := make([]string, 0, s.Len()+2)
 	parts = append(parts, "{")

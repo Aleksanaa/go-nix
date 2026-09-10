@@ -52,6 +52,29 @@ func lookupDerivation(drvPath string) *Derivation {
 	return nil
 }
 
+// DerivationOf returns the derivation a value names, or nil when it is not
+// one. It is how a caller outside the package — the CLI — turns an evaluated
+// derivation back into the object whose store paths and JSON it can read.
+func DerivationOf(val NixValue) *Derivation {
+	if val.Kind() != KindSet {
+		return nil
+	}
+	x, ok := val.Set().Get(symDrvPath)
+	if !ok {
+		return nil
+	}
+	if v := x.Val(); v.Kind() == KindString {
+		return lookupDerivation(v.Str().Content)
+	}
+	return nil
+}
+
+// DrvPath is the derivation's store path.
+func (d *Derivation) DrvPath() string { return d.drvPath }
+
+// JSON serialises the derivation the way `nix derivation show` does.
+func (d *Derivation) JSON() ([]byte, error) { return d.drv.JSON() }
+
 // stringWithContext makes a string that carries derivation references.
 func stringWithContext(content string, ctx ...stringContext) *NixString {
 	s := newString(content)
@@ -81,8 +104,8 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 	name := derivationAttr(w, attrs, symName)
 
 	// __structuredAttrs and __ignoreNulls are read first, as in Nix.
-	if _, ok := attrs.Get(symStructuredAttrs); ok {
-		if attr, ok := attrs.Get(symStructuredAttrs); ok && attr.Eval(w).Kind() == KindBool && attr.Eval(w).Bool() {
+	if attr, ok := attrs.Get(symStructuredAttrs); ok {
+		if val := attr.Eval(w); val.Kind() == KindBool && val.Bool() {
 			w.throwf(ErrEval, "structured attributes are not supported")
 		}
 	}
@@ -202,13 +225,14 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 	return d
 }
 
-// derivationAttr reads a required attribute as a string with no context.
+// derivationAttr reads a required attribute as a string, which is how Nix
+// reads the name: only a string is accepted, and its context is discarded.
 func derivationAttr(w *worker, attrs *AttrSet, sym Sym) string {
 	x, ok := attrs.Get(sym)
 	if !ok {
 		w.throwf(ErrMissingAttribute, "attribute '%s' missing", sym)
 	}
-	return ToString(w, x.Eval(w)).Content
+	return assertString(w, x.Eval(w)).Content
 }
 
 // appendStringContext collects the references a coerced string carries.
@@ -332,20 +356,22 @@ func bDerivation(w *worker, args ...*Expression) NixValue {
 	for _, a := range attrs.attrs {
 		common.Bind1(a.sym, a.x)
 	}
+	// The output names and the all/drvAttrs attributes are what `//` adds on
+	// top of drvAttrs, so they override an input attribute of the same name.
 	for i := range outputs {
 		idx := i
-		common.Bind1(Intern(outputs[i]), thunk(w, func(w *worker) NixValue {
+		common.Set(Intern(outputs[i]), thunk(w, func(w *worker) NixValue {
 			return SetValue(elem[idx])
 		}))
 	}
-	common.Bind1(symAll, thunk(w, func(w *worker) NixValue {
+	common.Set(symAll, thunk(w, func(w *worker) NixValue {
 		list := make(NixList, len(elem))
 		for i := range elem {
 			list[i] = value(w, SetValue(elem[i]))
 		}
 		return ListValue(list)
 	}))
-	common.Bind1(symDrvAttrs, value(w, SetValue(attrs)))
+	common.Set(symDrvAttrs, value(w, SetValue(attrs)))
 	common.finish(w)
 
 	for i, o := range outputs {

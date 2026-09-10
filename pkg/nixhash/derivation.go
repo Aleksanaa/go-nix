@@ -1,6 +1,8 @@
 package nixhash
 
 import (
+	"bytes"
+	"encoding/json"
 	"sort"
 	"strings"
 )
@@ -294,4 +296,89 @@ func outputPathName(drvName, outputName string) string {
 func makeStorePathString(typ, hashHex, name string) string {
 	s := typ + ":" + hashHex + ":" + storeDir + ":" + name
 	return storeDir + "/" + String(s).Compress(20).String(32) + "-" + name
+}
+
+// storePathName is a store path without its store directory, which is how the
+// derivation JSON spells paths (see `nix derivation show`).
+func storePathName(p string) string {
+	return strings.TrimPrefix(p, storeDir+"/")
+}
+
+// TextStorePath returns the store path of a text file holding contents, which
+// is what builtins.toFile produces: a path of type "text" hashing the file's
+// contents together with the store paths it references.
+func TextStorePath(name, contents string, refs []string) string {
+	typ := "text"
+	for _, r := range refs {
+		typ += ":" + r
+	}
+	return makeStorePathString(typ, String(contents).TypeString(16), name)
+}
+
+// OutputPlaceholder returns the placeholder string an output is known by
+// before it is built, which builtins.placeholder produces.
+func OutputPlaceholder(outputName string) string {
+	return "/" + String("nix-output:"+outputName).String(32)
+}
+
+// derivationJSONVersion is Nix's expectedJsonVersionDerivation.
+const derivationJSONVersion = 4
+
+// JSON serialises the derivation the way `nix derivation show` does: outputs
+// and inputs are named by their store-path names, while the environment keeps
+// the full paths.
+func (d *Derivation) JSON() ([]byte, error) {
+	outputs := make(map[string]any, len(d.Outputs))
+	for name, o := range d.Outputs {
+		outputs[name] = map[string]any{"path": storePathName(o.Path)}
+	}
+
+	drvs := make(map[string]any, len(d.InputDrvs))
+	for drvPath, outs := range d.InputDrvs {
+		drvs[storePathName(drvPath)] = map[string]any{
+			"outputs":        outs,
+			"dynamicOutputs": map[string]any{},
+		}
+	}
+
+	srcs := d.InputSrcs
+	if srcs == nil {
+		srcs = []string{}
+	}
+	srcNames := make([]string, len(srcs))
+	for i, s := range srcs {
+		srcNames[i] = storePathName(s)
+	}
+
+	args := d.Args
+	if args == nil {
+		args = []string{}
+	}
+
+	return marshalNoEscape(map[string]any{
+		"name":    d.Name,
+		"version": derivationJSONVersion,
+		"outputs": outputs,
+		"inputs": map[string]any{
+			"drvs": drvs,
+			"srcs": srcNames,
+		},
+		"system":  d.System,
+		"builder": d.Builder,
+		"args":    args,
+		"env":     d.Env,
+	})
+}
+
+// marshalNoEscape is json.Marshal without the HTML escaping Go applies by
+// default, which would turn a builder argument's ">" into "\u003e" where Nix
+// writes ">" verbatim.
+func marshalNoEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }

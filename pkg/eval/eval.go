@@ -9,6 +9,7 @@ package eval
 
 import (
 	"strings"
+	"unsafe"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
@@ -42,7 +43,17 @@ func delay(w *worker, scope *Scope, pr *p.Parser) *Expression {
 // Print renders a value, forcing it down to the given depth. A negative depth
 // forces it completely.
 func Print(val NixValue, depth int) (string, error) {
-	return catching(func() string { return val.Print(mainWorker, depth) })
+	return catching(func() string {
+		// A full print is the one traversal the depth bound cannot stop, so it
+		// tracks what it has already printed to report self-referential values
+		// rather than recurse without end.
+		if depth < 0 {
+			mainWorker.seen = make(map[unsafe.Pointer]bool)
+		} else {
+			mainWorker.seen = nil
+		}
+		return val.Print(mainWorker, depth)
+	})
 }
 
 // catching runs f, turning an evaluation failure into an error. Any other

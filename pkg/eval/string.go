@@ -56,6 +56,27 @@ type stringExtra struct {
 // newString makes a plain string.
 func newString(s string) *NixString { return &NixString{Content: s} }
 
+// withContext makes a string with src's content replaced but its context and
+// impurities kept, as baseNameOf and dirOf do.
+func withContext(content string, src *NixString) *NixString {
+	s := newString(content)
+	if src.extra == nil {
+		return s
+	}
+	e := &stringExtra{}
+	if len(src.extra.Context) != 0 {
+		e.Context = append([]stringContext(nil), src.extra.Context...)
+	}
+	if len(src.extra.Impurities) != 0 {
+		e.Impurities = make(map[string]string, len(src.extra.Impurities))
+		for k, v := range src.extra.Impurities {
+			e.Impurities[k] = v
+		}
+	}
+	s.extra = e
+	return s
+}
+
 func (str *NixString) Print() string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`, "\r", `\r`)
 	return `"` + r.Replace(str.Content) + `"`

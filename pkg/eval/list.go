@@ -1,6 +1,9 @@
 package eval
 
-import "strings"
+import (
+	"strings"
+	"unsafe"
+)
 
 // NixList is a list of lazily evaluated elements.
 type NixList []*Expression
@@ -8,6 +11,13 @@ type NixList []*Expression
 func (l NixList) Print(w *worker, recurse int) string {
 	if recurse == 0 {
 		return "[ ... ]"
+	}
+	if w.seen != nil && len(l) > 0 {
+		p := unsafe.Pointer(&l[0])
+		if w.seen[p] {
+			return "«repeated»"
+		}
+		w.seen[p] = true
 	}
 	parts := make([]string, 0, len(l)+2)
 	parts = append(parts, "[")

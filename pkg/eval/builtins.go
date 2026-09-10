@@ -93,6 +93,16 @@ var builtins = map[string]builtin{
 	"substring":        {3, bSubstring, "Substring of a string, by start offset and length.", false},
 	"toString":         {1, bToString, "Coerce a value to a string.", true},
 
+	// Strings with context.
+	"hasContext":                 {1, bHasContext, "Whether a string refers to any derivation or path.", false},
+	"unsafeDiscardStringContext": {1, bUnsafeDiscardStringContext, "A string without the derivations it refers to.", false},
+
+	// Paths and hashing.
+	"baseNameOf": {1, bBaseNameOf, "The part of a path after the last slash.", false},
+	"dirOf":      {1, bDirOf, "The part of a path before the last slash.", false},
+	"hashString": {2, bHashString, "The base-16 digest of a string.", false},
+	"toFile":     {2, bToFile, "Store a string in a file and return its path.", false},
+
 	// Serialisation.
 	"fromJSON": {1, bFromJSON, "Parse a JSON string into a Nix value.", false},
 	"toJSON":   {1, bToJSON, "Render a value as JSON.", false},
@@ -100,6 +110,7 @@ var builtins = map[string]builtin{
 	// Derivations.
 	"derivation":       {1, bDerivation, "Build a derivation from an attribute set.", true},
 	"derivationStrict": {1, bDerivationStrict, "Build a derivation, returning only its paths.", true},
+	"placeholder":      {1, bPlaceholder, "The placeholder string an output is known by before it is built.", false},
 }
 
 // globals are the non-function names Nix predefines.
