@@ -398,7 +398,7 @@ func (x *Expression) thunkFor(n *p.Node) *Expression {
 	case p.IDNode:
 		// A name the chain does not hold may still come from a `with`, whose
 		// set has not been evaluated yet, so that one stays a thunk.
-		if y, ok := x.Scope.Lookup(x.Scope.name(n)); ok {
+		if _, y, ok := x.Scope.lookupNode(n); ok {
 			return y
 		}
 	case p.IntNode, p.FloatNode, p.PathNode, p.URINode:

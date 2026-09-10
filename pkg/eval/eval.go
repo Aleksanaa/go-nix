@@ -117,8 +117,7 @@ func (x *Expression) resolve() *Expression {
 		x.Value = x.evalString()
 
 	case p.IDNode:
-		sym := x.Scope.name(n)
-		y, ok := x.Scope.Lookup(sym)
+		sym, y, ok := x.Scope.lookupNode(n)
 		if !ok {
 			throwf(ErrUndefinedVariable, "undefined variable '%s'", sym)
 		}

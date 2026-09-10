@@ -32,6 +32,10 @@ type static struct {
 	// lambda is what a function node binds and where its body is, neither of
 	// which depends on the scope a closure over it is made in.
 	lambda *lambdaInfo
+	// hops is one more than the number of scopes between the one an
+	// identifier is evaluated in and the one that binds it, or zero when that
+	// is not settled yet.
+	hops int32
 	// attrSym is the name of the attribute whose value this node is, for the
 	// backtrace frame that says which attribute failed.
 	attrSym Sym

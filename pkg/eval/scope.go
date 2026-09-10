@@ -58,29 +58,98 @@ func (scope *Scope) parser() *p.Parser {
 
 // Lookup finds sym, searching lexical bindings first and `with` bindings only
 // afterwards.
+//
+// One walk answers both: a lexical binding anywhere in the chain beats every
+// `with`, so the nearest `with` match is remembered and only used once the
+// walk has finished without finding a lexical one.
 func (scope *Scope) Lookup(sym Sym) (*Expression, bool) {
-	for _, lowPrio := range [2]bool{false, true} {
-		for s := scope; s != nil; s = s.Parent {
-			if s.LowPrio != lowPrio {
-				continue
-			}
-			if s.expr != nil {
-				if s.sym == sym {
-					return s.expr, true
+	x, _, ok := scope.lookupFrom(sym)
+	return x, ok
+}
+
+// lookupFrom is Lookup, also reporting how many scopes had to be skipped to
+// reach a lexical binding. A `with` reports none: what its set holds is not
+// decided until it is evaluated, and a nearer `with` shadows a farther one, so
+// there is nothing about it worth remembering.
+func (scope *Scope) lookupFrom(sym Sym) (x *Expression, hops int32, ok bool) {
+	var with *Expression
+	hops = 0
+	for s := scope; s != nil; s, hops = s.Parent, hops+1 {
+		if s.LowPrio {
+			if with == nil {
+				if y, found := s.Binds[sym]; found {
+					with = y
 				}
-				continue
 			}
-			if x, ok := s.Binds[sym]; ok {
-				return x, true
+			continue
+		}
+		if y, found := s.lookup1(sym); found {
+			return y, hops, true
+		}
+	}
+	return with, 0, with != nil
+}
+
+// lookup1 finds sym in this scope alone.
+func (s *Scope) lookup1(sym Sym) (*Expression, bool) {
+	if s.expr != nil {
+		if s.sym == sym {
+			return s.expr, true
+		}
+		return nil, false
+	}
+	x, ok := s.Binds[sym]
+	return x, ok
+}
+
+// lookupNode finds what an identifier node refers to, and interns its name.
+//
+// Which scope holds a name is decided by the syntax: the same identifier node,
+// evaluated again, is reached through a chain of scopes of the same shape. So
+// the number of scopes to skip is remembered against the node and the next
+// evaluation jumps straight to it, instead of probing a map at every level on
+// the way. Nix settles this once and for all at parse time; this arrives at
+// the same place without a pass of its own, and checks the name it lands on,
+// so that a chain of a shape it did not expect costs a search rather than a
+// wrong answer.
+func (scope *Scope) lookupNode(n *p.Node) (Sym, *Expression, bool) {
+	e := scope.file.static.get(n.ID)
+	if e.sym == 0 {
+		e.sym = Intern(scope.file.parser.TokenString(n.Tokens[0]))
+	}
+	sym := e.sym
+	if e.hops > 0 {
+		s := scope
+		for i := e.hops - 1; i > 0 && s != nil; i-- {
+			s = s.Parent
+		}
+		if s != nil {
+			if x, ok := s.lookup1(sym); ok {
+				return sym, x, true
 			}
 		}
 	}
-	return nil, false
+	x, hops, ok := scope.lookupFrom(sym)
+	if ok {
+		e.hops = hops + 1
+	}
+	return sym, x, ok
 }
 
 // evalNode evaluates a node in this scope, with no surrounding expression to
 // take the scope from.
 func (scope *Scope) evalNode(n *p.Node) NixValue {
+	// Reading a name is the value of the thunk it is bound to. An expression
+	// of its own would mean forcing twice — once for the read, once for the
+	// binding — and a backtrace frame that says nothing the binding's own
+	// frame does not.
+	if n.Type == p.IDNode {
+		sym, x, ok := scope.lookupNode(n)
+		if !ok {
+			throwAt(scope, n, ErrUndefinedVariable, "undefined variable '%s'", sym)
+		}
+		return x.Eval()
+	}
 	y := Expression{Scope: scope, Node: n}
 	return y.Eval()
 }
