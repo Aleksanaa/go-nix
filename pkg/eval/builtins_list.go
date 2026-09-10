@@ -67,8 +67,11 @@ func bFoldl(args ...*Expression) NixValue {
 	f := assertLambda(args[0].Eval())
 	acc := args[1]
 	for _, x := range assertList(args[2].Eval()) {
-		step := assertLambda(f.Apply(acc).Eval())
-		acc = value(step.Apply(x).Eval())
+		// The step's own expression carries the accumulator into the next
+		// round: forcing it here is what makes the fold strict, and it has
+		// memoized the value, so nothing else needs to hold it.
+		acc = apply2(f, acc, x)
+		acc.Eval()
 	}
 	return acc.Eval()
 }
@@ -80,8 +83,13 @@ func bGenList(args ...*Expression) NixValue {
 		throwf(ErrEval, "cannot create a list of %d elements", n)
 	}
 	result := make(NixList, n)
+	// The index an element is applied to is a value rather than a computation,
+	// so the expressions holding them are made in one block: they are all of
+	// the same age and have the same lifetime as the list itself.
+	idx := make([]Expression, n)
 	for i := range result {
-		result[i] = f.Apply(value(NixInt(i)))
+		idx[i].Value = NixInt(i)
+		result[i] = f.Apply(&idx[i])
 	}
 	return result
 }
@@ -132,8 +140,7 @@ func bSort(args ...*Expression) NixValue {
 	result := make(NixList, len(list))
 	copy(result, list)
 	sort.SliceStable(result, func(i, j int) bool {
-		less := assertLambda(f.Apply(result[i]).Eval())
-		return bool(assertBool(less.Apply(result[j]).Eval()))
+		return bool(assertBool(apply2(f, result[i], result[j]).Eval()))
 	})
 	return result
 }

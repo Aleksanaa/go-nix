@@ -79,7 +79,7 @@ const maxTraceFrames = 64
 // expressions currently being evaluated.
 func throwf(kind ErrorKind, format string, args ...any) {
 	err := &EvalError{Kind: kind, Msg: fmt.Sprintf(format, args...)}
-	err.capture(evalStack)
+	err.capture(evalStack[:evalDepth])
 	panic(err)
 }
 

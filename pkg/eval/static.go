@@ -26,6 +26,18 @@ type static struct {
 	// val is the value of a literal: a number, a path, or a string with no
 	// interpolation in it.
 	val NixValue
+	// expr is a literal node as an expression, for where one is passed on
+	// rather than evaluated.
+	expr *Expression
+	// lambda is what a function node binds and where its body is, neither of
+	// which depends on the scope a closure over it is made in.
+	lambda *lambdaInfo
+	// attrSym is the name of the attribute whose value this node is, for the
+	// backtrace frame that says which attribute failed.
+	attrSym Sym
+	// owner is the function a body node belongs to, which is where a call's
+	// frame points.
+	owner *p.Node
 	// sym is the interned name of an identifier or of an attribute-path
 	// component. The zero Sym is the empty name, which no identifier has, so
 	// it doubles as "not computed yet".
@@ -78,4 +90,15 @@ func (scope *Scope) name(n *p.Node) Sym {
 		e.sym = Intern(scope.file.parser.TokenString(n.Tokens[0]))
 	}
 	return e.sym
+}
+
+// literalExpr returns a literal node as an already evaluated expression. A
+// literal is the same value however often it is reached, so one expression
+// serves every use of the node, and passing one as an argument costs nothing.
+func (scope *Scope) literalExpr(n *p.Node) *Expression {
+	e := scope.file.static.get(n.ID)
+	if e.expr == nil {
+		e.expr = value(scope.evalNode(n))
+	}
+	return e.expr
 }
