@@ -56,9 +56,45 @@ func TestComputedAttrNameIsTheOnlyWrite(t *testing.T) {
 	}
 }
 
+// TestInvalidLiteralKeepsPosition pins that a literal the pass cannot take —
+// a number out of range — still reports as a syntax error at its own position,
+// and only when it is evaluated. The pass sees it when the file is loaded,
+// which is before there is any evaluation to hang a backtrace off.
+func TestInvalidLiteralKeepsPosition(t *testing.T) {
+	_, err := EvalString(`let f = x: x; in f 999999999999999999999999999999`)
+	e, ok := err.(*EvalError)
+	if !ok {
+		t.Fatalf("expected an *EvalError, got %T", err)
+	}
+	if e.Kind != ErrSyntax {
+		t.Errorf("kind = %v, want ErrSyntax", e.Kind)
+	}
+	if e.Pos == nil || e.Pos.Column != 18 { // the argument, not the let
+		t.Errorf("position = %+v, want column 18", e.Pos)
+	}
+	// A bad number that is never forced must not be reported.
+	if _, err := EvalString(`let unused = x: 999999999999999999999999999999; in 42`); err != nil {
+		t.Errorf("unused bad literal reported: %v", err)
+	}
+}
+
+// staticSnap is what is compared before and after an evaluation: the fields
+// of a static entry, with the one atomic read out to a plain int rather than
+// copied (the entry cannot be copied, since the atomic must not be).
+type staticSnap struct {
+	val     NixValue
+	expr    *Expression
+	lambda  *lambdaInfo
+	attrs   []Sym
+	owner   *p.Node
+	sym     Sym
+	bad     string
+	attrSym int32
+}
+
 // cacheAround evaluates src and returns the cache as the pass left it and as
 // the evaluation left it.
-func cacheAround(t *testing.T, src string) (before, after []static, err error) {
+func cacheAround(t *testing.T, src string) (before, after []staticSnap, err error) {
 	t.Helper()
 	pr, perr := p.ParseString(src)
 	if perr != nil {
@@ -70,10 +106,7 @@ func cacheAround(t *testing.T, src string) (before, after []static, err error) {
 	w := &worker{}
 	x := delay(w, DefaultScope, pr)
 	entries := x.scope().file.static.entries
-	before = make([]static, len(entries))
-	for i := range entries {
-		before[i] = copyStatic(&entries[i])
-	}
+	before = snap(entries)
 	val, err := catching(func() NixValue { return x.Eval(w) })
 	if err != nil {
 		return nil, nil, err
@@ -82,24 +115,26 @@ func cacheAround(t *testing.T, src string) (before, after []static, err error) {
 	if _, err := catching(func() string { return val.Print(w, -1) }); err != nil {
 		return nil, nil, err
 	}
-	after = make([]static, len(entries))
-	for i := range entries {
-		after[i] = copyStatic(&entries[i])
-	}
+	after = snap(entries)
 	return before, after, nil
 }
 
-// copyStatic takes the fields of an entry, atomics read rather than copied.
-func copyStatic(e *static) static {
-	var c static
-	c.val, c.expr, c.lambda, c.attrs, c.owner, c.sym, c.bad =
-		e.val, e.expr, e.lambda, e.attrs, e.owner, e.sym, e.bad
-	c.attrSym.Store(e.attrSym.Load())
-	return c
+// snap reads the comparable fields of a set of entries out of them.
+func snap(entries []static) []staticSnap {
+	s := make([]staticSnap, len(entries))
+	for i := range entries {
+		e := &entries[i]
+		s[i] = staticSnap{
+			val: e.val, expr: e.expr, lambda: e.lambda, attrs: e.attrs,
+			owner: e.owner, sym: e.sym, bad: e.bad,
+			attrSym: e.attrSym.Load(),
+		}
+	}
+	return s
 }
 
 // diffStatic names the first field that differs, or "" if none does.
-func diffStatic(a, b *static) string {
+func diffStatic(a, b *staticSnap) string {
 	switch {
 	case a.val != b.val:
 		return "val"
@@ -115,7 +150,7 @@ func diffStatic(a, b *static) string {
 		return "sym"
 	case a.bad != b.bad:
 		return "bad"
-	case a.attrSym.Load() != b.attrSym.Load():
+	case a.attrSym != b.attrSym:
 		return "attrSym"
 	}
 	return ""

@@ -136,9 +136,16 @@ func (scope *Scope) literalValue(w *worker, n *p.Node) (NixValue, bool) {
 	return NixValue{}, false
 }
 
-// literal returns the value of a literal node, computing it at most once.
+// literal returns the value of a literal node, which the pass worked out
+// before the evaluation started. A literal the pass could not take — a number
+// out of range — is raised here, where the evaluation has a backtrace to
+// attach, rather than when the file was loaded.
 func (scope *Scope) literal(w *worker, n *p.Node, compute func(*worker, string) NixValue) NixValue {
-	return scope.file.static.get(n.ID).val
+	e := scope.file.static.get(n.ID)
+	if e.bad != "" {
+		w.throwf(ErrSyntax, "%s", e.bad)
+	}
+	return e.val
 }
 
 // name returns the interned name of an identifier node, interning it at most
@@ -151,7 +158,11 @@ func (scope *Scope) name(n *p.Node) Sym {
 // literal is the same value however often it is reached, so one expression
 // serves every use of the node, and passing one as an argument costs nothing.
 func (scope *Scope) literalExpr(w *worker, n *p.Node) *Expression {
-	return scope.file.static.get(n.ID).expr
+	e := scope.file.static.get(n.ID)
+	if e.bad != "" {
+		w.throwf(ErrSyntax, "%s", e.bad)
+	}
+	return e.expr
 }
 
 // cache records the value of a literal that the pass works out, and refuses to

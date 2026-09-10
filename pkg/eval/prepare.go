@@ -83,11 +83,39 @@ func (pr *preparer) name(n *p.Node) Sym {
 // stands for it where one is passed on rather than evaluated. That expression
 // is shared by every use of the node and outlives them all, so it is allocated
 // on its own rather than out of a block that a whole evaluation would pin.
+//
+// The one way a literal can fail — a number the machine cannot hold — is not
+// raised here. The pass runs when the file is loaded, before anything has
+// been evaluated and with no backtrace to report; a bad number raised then
+// would lose its position. The message is kept against the node instead, and
+// raised when the node is evaluated, exactly as it was before the pass
+// existed.
 func (pr *preparer) literal(n *p.Node, compute func(*worker, string) NixValue) {
 	e := pr.entry(n)
-	e.val = compute(mainWorker, pr.file.parser.TokenString(n.Tokens[0]))
+	val, bad := literalAt(mainWorker, pr.file.parser.TokenString(n.Tokens[0]), compute)
+	if bad != "" {
+		e.bad = bad
+		return
+	}
+	e.val = val
 	e.expr = new(Expression)
-	e.expr.setValue(e.val)
+	e.expr.setValue(val)
+}
+
+// literalAt works out a literal's value, catching the failure an out-of-range
+// number is so that the caller can defer it. Only the message is kept: a
+// literal raises one kind, ErrSyntax, and nothing else.
+func literalAt(w *worker, s string, compute func(*worker, string) NixValue) (val NixValue, bad string) {
+	defer func() {
+		if r := recover(); r != nil {
+			if err := asEvalError(r); err != nil {
+				bad = err.Msg
+				return
+			}
+			panic(r)
+		}
+	}()
+	return compute(w, s), ""
 }
 
 // str works out a string with nothing interpolated into it, which is a literal
@@ -162,6 +190,11 @@ func (pr *preparer) lambda(n *p.Node) {
 				var def *p.Node // `a ? default`
 				if len(arg.Nodes) == 2 {
 					def = arg.Nodes[1]
+					// A default is the value of the formal, so a backtrace
+					// names it after the formal, exactly as the evaluator will
+					// when it binds one. Settled here so evaluation never
+					// writes it.
+					pr.entry(def).attrSym.Store(int32(sym))
 				}
 				if _, dup := fn.Formal[sym]; dup {
 					e.bad = dupFormal(sym)
