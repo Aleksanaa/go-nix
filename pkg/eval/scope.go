@@ -1,6 +1,8 @@
 package eval
 
 import (
+	"unsafe"
+
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
@@ -9,34 +11,53 @@ import (
 // A scope binds either a whole set of names (a `let`, a recursive set, a
 // function called with formal arguments) or a single one. The single case is
 // the plain `arg: body` call, which is common enough — every curried function
-// makes one per argument — that giving it a Go map of one entry showed up as
-// the largest single source of allocation in a profile.
+// makes one per argument — that giving it a set of one entry showed up as the
+// largest single source of allocation in a profile.
+//
+// Since it is never both, the two share a word, which keeps a scope to 32
+// bytes: after thunks, scopes are what an evaluation allocates most of.
 //
 // `with` introduces a low-priority scope: names it provides are only used once
 // the whole chain has been searched for ordinary (lexical) bindings, and a
 // nearer `with` shadows a farther one.
 type Scope struct {
-	Binds NixSet // nil when this scope binds a single name
-
-	sym  Sym         // the bound name, when Binds is nil
-	expr *Expression // its value, and the marker for the single-name case
-
+	// bound is the set of names this scope binds, or the expression the single
+	// name stands for. sym says which: it is zero for a set.
+	bound  unsafe.Pointer
 	Parent *Scope
 	// file is the source these expressions were parsed from, together with what
 	// has been worked out about its nodes. It lives here rather than on every
 	// Expression, of which there are orders of magnitude more.
 	file    *file
+	sym     Sym
 	LowPrio bool
+}
+
+// binds is the set of names this scope binds, or nil when it binds one name.
+func (s *Scope) binds() NixSet {
+	if s.sym != 0 {
+		return nil
+	}
+	return (*AttrSet)(s.bound)
+}
+
+// single is the expression this scope's one name stands for, or nil when it
+// binds a set of names.
+func (s *Scope) single() *Expression {
+	if s.sym == 0 {
+		return nil
+	}
+	return (*Expression)(s.bound)
 }
 
 // Subscope nests a scope binding a set of names.
 func (scope *Scope) Subscope(binds NixSet, lowPrio bool) *Scope {
-	return &Scope{Binds: binds, LowPrio: lowPrio, Parent: scope, file: scope.file}
+	return &Scope{bound: unsafe.Pointer(binds), LowPrio: lowPrio, Parent: scope, file: scope.file}
 }
 
 // Subscope1 nests a scope binding a single name.
 func (scope *Scope) Subscope1(sym Sym, x *Expression) *Scope {
-	return &Scope{sym: sym, expr: x, Parent: scope, file: scope.file}
+	return &Scope{sym: sym, bound: unsafe.Pointer(x), Parent: scope, file: scope.file}
 }
 
 // ForFile returns the scope bound to a parsed file, which is how the root
@@ -77,20 +98,22 @@ func (scope *Scope) lookupFrom(sym Sym) (x *Expression, hops, slot int32, ok boo
 	for s := scope; s != nil; s, hops = s.Parent, hops+1 {
 		if s.LowPrio {
 			if with == nil {
-				if y, found := s.Binds.Get(sym); found {
+				if y, found := (*AttrSet)(s.bound).Get(sym); found {
 					with = y
 				}
 			}
 			continue
 		}
-		if s.expr != nil {
+		if s.sym != 0 {
 			if s.sym == sym {
-				return s.expr, hops, -1, true
+				return (*Expression)(s.bound), hops, -1, true
 			}
 			continue
 		}
-		if y, found := s.Binds.Get(sym); found {
-			return y, hops, s.Binds.slot(sym), true
+		if set := (*AttrSet)(s.bound); set != nil {
+			if y, slot, found := set.getSlot(sym); found {
+				return y, hops, slot, true
+			}
 		}
 	}
 	// A `with` reports no place: -1 says there is nothing to remember.
@@ -119,7 +142,7 @@ func (scope *Scope) lookupNode(n *p.Node) (Sym, *Expression, bool) {
 		// nearest one wins. Nix marks such a name the same way.
 		for s := scope; s != nil; s = s.Parent {
 			if s.LowPrio {
-				if x, ok := s.Binds.Get(sym); ok {
+				if x, ok := (*AttrSet)(s.bound).Get(sym); ok {
 					return sym, x, true
 				}
 			}
@@ -132,11 +155,11 @@ func (scope *Scope) lookupNode(n *p.Node) (Sym, *Expression, bool) {
 			s = s.Parent
 		}
 		if s != nil {
-			if s.expr != nil {
+			if s.sym != 0 {
 				if s.sym == sym {
-					return sym, s.expr, true
+					return sym, (*Expression)(s.bound), true
 				}
-			} else if x, ok := s.Binds.at(e.slot-1, sym); ok {
+			} else if x, ok := (*AttrSet)(s.bound).at(e.slot-1, sym); ok {
 				// The name was in this slot last time and still is, which
 				// is the whole lookup: two loads and a compare.
 				return sym, x, true
@@ -168,7 +191,8 @@ func (scope *Scope) evalNode(n *p.Node) NixValue {
 		}
 		return x.Eval()
 	}
-	y := Expression{Scope: scope, Node: n}
+	var y Expression
+	y.setThunk(scope, n)
 	return y.Eval()
 }
 
@@ -215,11 +239,11 @@ func (scope *Scope) Names() []string {
 		}
 	}
 	for s := scope; s != nil; s = s.Parent {
-		if s.expr != nil {
+		if s.single() != nil {
 			add(s.sym)
 			continue
 		}
-		for _, sym := range s.Binds.Keys() {
+		for _, sym := range s.binds().Keys() {
 			add(sym)
 		}
 	}

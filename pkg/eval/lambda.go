@@ -2,15 +2,15 @@ package eval
 
 import (
 	"fmt"
+	"unsafe"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
-// NixLambda is a value that can be applied to an argument. Apply is lazy: it
+// NixLambda is anything that can be applied to an argument. Apply is lazy: it
 // returns the unevaluated expression standing for the call, so that an
 // application only costs what its result is actually used for.
 type NixLambda interface {
-	NixValue
 	Apply(arg *Expression) *Expression
 }
 
@@ -42,11 +42,6 @@ type NixExprLambda struct {
 	Scope *Scope
 }
 
-func (f *NixExprLambda) Print(recurse int) string { return "«lambda»" }
-
-// Compare is always false: Nix cannot compare functions.
-func (f *NixExprLambda) Compare(val NixValue) bool { return false }
-
 func (f *NixExprLambda) Apply(arg *Expression) *Expression {
 	var scope *Scope
 	if f.HasFormal {
@@ -69,11 +64,12 @@ func (f *NixExprLambda) Apply(arg *Expression) *Expression {
 // resulting bindings. Defaults are evaluated in the function's own scope, so
 // one formal may refer to another.
 func (f *NixExprLambda) bindFormals(binds NixSet, scope *Scope, arg *Expression) {
-	args, ok := arg.Eval().(NixSet)
-	if !ok {
+	val := arg.Eval()
+	if val.Kind() != KindSet {
 		throwf(ErrType, "value is %s while a set was expected, as the function takes formal arguments",
-			anTypeName(arg.Value))
+			anTypeName(val))
 	}
+	args := val.Set()
 	for _, sym := range f.FormalOrder {
 		switch y, given := args.Get(sym); {
 		case given:
@@ -116,11 +112,10 @@ type NixPrimop struct {
 	ArgNum int
 }
 
-func (op *NixPrimop) Print(recurse int) string {
+// printOp is how a builtin renders, which is all a value of one can be asked.
+func (op *NixPrimop) printOp() string {
 	return fmt.Sprintf("«primop %s»", op.Sym)
 }
-
-func (op *NixPrimop) Compare(val NixValue) bool { return false }
 
 func (op *NixPrimop) Apply(arg *Expression) *Expression {
 	var args [maxPrimopArgs]*Expression
@@ -128,12 +123,12 @@ func (op *NixPrimop) Apply(arg *Expression) *Expression {
 	if op.ArgNum == 1 {
 		return op.call(args)
 	}
-	return value(&NixPartialPrimop{Primop: op, Args: args, N: 1})
+	return newPartial(op, args, 1)
 }
 
 func (op *NixPrimop) call(args [maxPrimopArgs]*Expression) *Expression {
 	x := newExpr()
-	x.Native = &nativeCall{op: op, args: args}
+	x.a = unsafe.Pointer(&nativeCall{op: op, args: args})
 	x.blame = blamePrimop
 	return x
 }
@@ -146,11 +141,9 @@ type NixPartialPrimop struct {
 	N      int
 }
 
-func (pp *NixPartialPrimop) Print(recurse int) string {
+func (pp *NixPartialPrimop) printOp() string {
 	return fmt.Sprintf("«primop %s, %d of %d arguments»", pp.Primop.Sym, pp.N, pp.Primop.ArgNum)
 }
-
-func (pp *NixPartialPrimop) Compare(val NixValue) bool { return false }
 
 func (pp *NixPartialPrimop) Apply(arg *Expression) *Expression {
 	// The arguments are copied rather than extended in place: a partially
@@ -160,7 +153,7 @@ func (pp *NixPartialPrimop) Apply(arg *Expression) *Expression {
 	if pp.N+1 == pp.Primop.ArgNum {
 		return pp.Primop.call(args)
 	}
-	return value(&NixPartialPrimop{Primop: pp.Primop, Args: args, N: pp.N + 1})
+	return newPartial(pp.Primop, args, pp.N+1)
 }
 
 // apply2 applies f to two arguments at once.
@@ -209,4 +202,23 @@ func applyIn2(x *Expression, f NixLambda, a, b *Expression) bool {
 	scope := lam.Scope.Subscope1(lam.Arg, a).Subscope1(inner.Arg, b)
 	x.continueIn(inner.Body, scope, blameCall)
 	return true
+}
+
+// partialValue is a partial application together with the expression that
+// holds it, which is the only thing ever done with one.
+type partialValue struct {
+	partial NixPartialPrimop
+	expr    Expression
+}
+
+// newPartial is a builtin that has been given some of its arguments.
+func newPartial(op *NixPrimop, args [maxPrimopArgs]*Expression, n int) *Expression {
+	pv := &partialValue{partial: NixPartialPrimop{Primop: op, Args: args, N: n}}
+	pv.expr.setValue(NixValue{kind: KindPartial, ptr: unsafe.Pointer(&pv.partial)})
+	return &pv.expr
+}
+
+// applyToValue applies a function to a value the evaluator has in hand.
+func applyToValue(f NixLambda, v NixValue) *Expression {
+	return f.Apply(value(v))
 }

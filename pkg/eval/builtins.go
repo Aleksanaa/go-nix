@@ -1,5 +1,7 @@
 package eval
 
+import "unsafe"
+
 // A builtin is a primitive operation exposed through the `builtins` set.
 //
 // Arity is the number of arguments the implementation takes at once; Nix
@@ -110,11 +112,12 @@ func newDefaultScope() *Scope {
 	for name, b := range builtins {
 		sym := Intern(name)
 		op := &NixPrimop{Func: b.fn, ArgNum: b.arity, Doc: b.doc, Sym: sym}
-		builtinsSet.Bind1(sym, value(op))
+		val := LambdaValue(op)
+		builtinsSet.Bind1(sym, value(val))
 		if b.global {
-			mainSet.Bind1(sym, value(op))
+			mainSet.Bind1(sym, value(val))
 		}
-		mainSet.Bind1(Intern("__"+name), value(op))
+		mainSet.Bind1(Intern("__"+name), value(val))
 	}
 	for name, val := range globals {
 		sym := Intern(name)
@@ -122,7 +125,7 @@ func newDefaultScope() *Scope {
 		mainSet.Bind1(sym, value(val))
 	}
 
-	builtinsSet.Bind1(symBuiltins, value(builtinsSet))
-	mainSet.Bind1(symBuiltins, value(builtinsSet))
-	return &Scope{Binds: mainSet.finish()}
+	builtinsSet.Bind1(symBuiltins, value(SetValue(builtinsSet)))
+	mainSet.Bind1(symBuiltins, value(SetValue(builtinsSet)))
+	return &Scope{bound: unsafe.Pointer(mainSet.finish())}
 }

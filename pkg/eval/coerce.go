@@ -1,7 +1,6 @@
 package eval
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -19,32 +18,32 @@ func ToString(val NixValue) *NixString {
 }
 
 func coerceToString(val NixValue, more bool) *NixString {
-	switch v := val.(type) {
-	case *NixString:
-		return v
-	case *NixPath:
-		return String(v.String())
-	case NixSet:
-		return v.coerceToString(more)
+	switch val.Kind() {
+	case KindString:
+		return val.Str()
+	case KindPath:
+		return newString(val.Path().String())
+	case KindSet:
+		return val.Set().coerceToString(more)
 	}
 	if !more {
 		throwf(ErrType, "cannot coerce %s to a string", anTypeName(val))
 	}
-	switch v := val.(type) {
-	case NixInt:
-		return String(fmt.Sprintf("%d", v))
-	case NixFloat:
-		return String(fmt.Sprintf("%.6g", v))
-	case NixBool:
+	switch val.Kind() {
+	case KindInt:
+		return newString(printInt(val.Int()))
+	case KindFloat:
+		return newString(printFloat(val.Float()))
+	case KindBool:
 		// Nix renders true as "1" and false as the empty string.
-		if v {
-			return String("1")
+		if val.Bool() {
+			return newString("1")
 		}
-		return String("")
-	case *NixNull:
-		return String("")
-	case NixList:
-		return v.coerceToString(more)
+		return newString("")
+	case KindNull:
+		return newString("")
+	case KindList:
+		return coerceListToString(val.List(), more)
 	}
 	throwf(ErrType, "cannot coerce %s to a string", anTypeName(val))
 	return nil
@@ -52,14 +51,14 @@ func coerceToString(val NixValue, more bool) *NixString {
 
 // coerceToString on a set uses __toString if present, else outPath, which is
 // what makes a derivation usable inside a string.
-func (s NixSet) coerceToString(more bool) *NixString {
+func (s *AttrSet) coerceToString(more bool) *NixString {
 	if x, ok := s.Get(symToString); ok {
-		fn, ok := x.Eval().(NixLambda)
-		if !ok {
+		val := x.Eval()
+		if !val.IsLambda() {
 			throwf(ErrType, "value of the __toString attribute is %s while a function was expected",
-				anTypeName(x.Value))
+				anTypeName(val))
 		}
-		return coerceToString(fn.Apply(value(s)).Eval(), more)
+		return coerceToString(applyToValue(val.Lambda(), SetValue(s)).Eval(), more)
 	}
 	if x, ok := s.Get(symOutPath); ok {
 		return coerceToString(x.Eval(), more)
@@ -68,8 +67,8 @@ func (s NixSet) coerceToString(more bool) *NixString {
 	return nil
 }
 
-// coerceToString on a list joins the coerced elements with spaces.
-func (l NixList) coerceToString(more bool) *NixString {
+// coerceListToString joins the coerced elements with spaces.
+func coerceListToString(l NixList, more bool) *NixString {
 	result := &NixString{}
 	parts := make([]string, len(l))
 	for i, x := range l {

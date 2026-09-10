@@ -13,11 +13,11 @@ func ValueFromNative(x any) NixValue {
 	case float64:
 		// JSON has one number type; keep whole numbers as Nix integers.
 		if math.Mod(t, 1.0) == 0 && math.Abs(t) < math.MaxInt64 {
-			return NixInt(int64(t))
+			return Int(int64(t))
 		}
-		return NixFloat(t)
+		return Float(t)
 	case bool:
-		return NixBool(t)
+		return Bool(t)
 	case string:
 		return String(t)
 	case []any:
@@ -25,41 +25,43 @@ func ValueFromNative(x any) NixValue {
 		for i, val := range t {
 			result[i] = value(ValueFromNative(val))
 		}
-		return result
+		return ListValue(result)
 	case map[string]any:
 		result := NewSet(len(t))
 		for key, val := range t {
 			result.Bind1(Intern(key), value(ValueFromNative(val)))
 		}
-		return result.keepFirst()
+		return SetValue(result.keepFirst())
 	}
 	throwf(ErrType, "cannot convert a Go value of type %T to a Nix value", x)
-	return nil
+	return NixValue{}
 }
 
 // ValueToNative converts a Nix value into a value the JSON encoder accepts,
 // forcing it completely.
 func ValueToNative(x NixValue) any {
-	switch t := x.(type) {
-	case *NixNull:
+	switch x.Kind() {
+	case KindNull:
 		return nil
-	case NixInt:
-		return int64(t)
-	case NixFloat:
-		return float64(t)
-	case NixBool:
-		return bool(t)
-	case *NixString:
-		return t.Content
-	case *NixPath:
-		return t.String()
-	case NixList:
-		result := make([]any, len(t))
-		for i, x := range t {
-			result[i] = ValueToNative(x.Eval())
+	case KindInt:
+		return x.Int()
+	case KindFloat:
+		return x.Float()
+	case KindBool:
+		return x.Bool()
+	case KindString:
+		return x.Str().Content
+	case KindPath:
+		return x.Path().String()
+	case KindList:
+		list := x.List()
+		result := make([]any, len(list))
+		for i, el := range list {
+			result[i] = ValueToNative(el.Eval())
 		}
 		return result
-	case NixSet:
+	case KindSet:
+		t := x.Set()
 		// A set with a __toString or outPath attribute serialises as its
 		// string form, which is how derivations end up as store paths.
 		if t.Has(symToString) {

@@ -5,8 +5,8 @@ import "strings"
 // NixString is a string together with the build inputs it references.
 //
 // Almost no string references anything, and a string is one of the most
-// numerous values there is, so what it may carry besides its content lives
-// behind a pointer that most strings never allocate.
+// numerous values there is, so what a string may carry besides its content
+// lives behind a pointer that most of them never allocate.
 type NixString struct {
 	Content string
 	extra   *stringExtra
@@ -20,17 +20,12 @@ type stringExtra struct {
 	Impurities map[string]string
 }
 
-// String makes a plain string value.
-func String(s string) *NixString { return &NixString{Content: s} }
+// newString makes a plain string.
+func newString(s string) *NixString { return &NixString{Content: s} }
 
-func (str *NixString) Print(recurse int) string {
+func (str *NixString) Print() string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`, "\r", `\r`)
 	return `"` + r.Replace(str.Content) + `"`
-}
-
-func (str *NixString) Compare(val NixValue) bool {
-	str2, ok := val.(*NixString)
-	return ok && str.Content == str2.Content
 }
 
 // absorb takes over the context and impurities of another string, which is

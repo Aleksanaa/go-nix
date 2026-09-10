@@ -123,12 +123,12 @@ func (r *repl) value(src string) (eval.NixValue, bool) {
 	pr, err := p.ParseString(src)
 	if err != nil {
 		r.fail(err)
-		return nil, false
+		return eval.NixValue{}, false
 	}
 	val, err := eval.EvalIn(r.scope, pr)
 	if err != nil {
 		r.fail(err)
-		return nil, false
+		return eval.NixValue{}, false
 	}
 	return val, true
 }
@@ -214,7 +214,7 @@ func (r *repl) command(src string) bool {
 
 // add brings the attributes of a set into scope, the way `with` would.
 func (r *repl) add(val eval.NixValue, what string) {
-	set, ok := val.(eval.NixSet)
+	set, ok := val.AsSet()
 	if !ok {
 		fmt.Fprintf(r.out, "error: '%s' is %s, not a set\n", what, eval.TypeName(val))
 		return
@@ -254,7 +254,7 @@ func (r *repl) doc(arg string) {
 	if !ok {
 		return
 	}
-	op, ok := val.(*eval.NixPrimop)
+	op, ok := val.AsPrimop()
 	if !ok {
 		fmt.Fprintf(r.out, "error: '%s' is %s, which has no documentation\n", arg, eval.TypeName(val))
 		return
@@ -387,8 +387,7 @@ func (r *repl) set(src string) (eval.NixSet, bool) {
 	if err != nil {
 		return nil, false
 	}
-	set, ok := val.(eval.NixSet)
-	return set, ok
+	return val.AsSet()
 }
 
 var replCommands = []string{

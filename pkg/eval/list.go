@@ -26,9 +26,8 @@ func (l NixList) Concat(other NixList) NixList {
 	return append(result, other...)
 }
 
-func (l NixList) Compare(val NixValue) bool {
-	other, ok := val.(NixList)
-	if !ok || len(l) != len(other) {
+func (l NixList) Compare(other NixList) bool {
+	if len(l) != len(other) {
 		return false
 	}
 	for i, x := range l {

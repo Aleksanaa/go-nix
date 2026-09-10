@@ -113,17 +113,22 @@ func (s *AttrSet) at(i int32, sym Sym) (*Expression, bool) {
 	return s.attrs[i].x, true
 }
 
-// slot returns the position of sym, or -1.
-func (s *AttrSet) slot(sym Sym) int32 {
-	if s == nil || !s.sorted {
-		return -1
+// getSlot is Get, also reporting which slot the name was found in so that a
+// lookup can go straight back to it next time. A set still being built has no
+// settled slots, and reports -1.
+func (s *AttrSet) getSlot(sym Sym) (*Expression, int32, bool) {
+	if s == nil {
+		return nil, -1, false
 	}
 	for i := range s.attrs {
 		if s.attrs[i].sym == sym {
-			return int32(i)
+			if !s.sorted {
+				return s.attrs[i].x, -1, true
+			}
+			return s.attrs[i].x, int32(i), true
 		}
 	}
-	return -1
+	return nil, -1, false
 }
 
 // Keys returns the attribute names in the order Nix presents them:
@@ -166,17 +171,17 @@ func (s *AttrSet) Bind(syms []Sym, x *Expression) {
 		y, ok := s.Get(sym)
 		if !ok {
 			sub := NewSet(1)
-			s.Bind1(sym, value(sub))
+			s.Bind1(sym, value(SetValue(sub)))
 			s = sub
 			continue
 		}
 		// The intermediate set must be one this binding group created; merging
 		// into an attribute that is already a value would not be lazy.
-		sub, ok := y.Value.(NixSet)
-		if !ok {
+		val := y.Val()
+		if val.Kind() != KindSet {
 			throwf(ErrEval, "attribute '%s' already defined", strings.Join(symNames(syms[:i+1]), "."))
 		}
-		s = sub
+		s = val.Set()
 	}
 	s.Bind1(syms[last], x)
 }
@@ -185,8 +190,8 @@ func (s *AttrSet) Bind(syms []Sym, x *Expression) {
 // what a binding group does once it is complete.
 func (s *AttrSet) finishAll() {
 	for _, a := range s.attrs {
-		if sub, ok := a.x.Value.(NixSet); ok && !sub.sorted {
-			sub.finishAll()
+		if val := a.x.Val(); val.Kind() == KindSet && !val.Set().sorted {
+			val.Set().finishAll()
 		}
 	}
 	s.finish()
@@ -241,9 +246,8 @@ func (s *AttrSet) Update(other NixSet) NixSet {
 	return setOf(merged)
 }
 
-func (s *AttrSet) Compare(val NixValue) bool {
-	other, ok := val.(NixSet)
-	if !ok || len(s.attrs) != len(other.attrs) {
+func (s *AttrSet) Compare(other NixSet) bool {
+	if len(s.attrs) != len(other.attrs) {
 		return false
 	}
 	for i, a := range s.attrs {
@@ -286,9 +290,9 @@ func (s *AttrSet) Set(sym Sym, x *Expression) {
 
 // pair is a set of two known attributes, which is the shape of the answer a
 // handful of builtins give.
-func pair(sym1 Sym, val1 NixValue, sym2 Sym, val2 NixValue) NixSet {
+func pair(sym1 Sym, val1 NixValue, sym2 Sym, val2 NixValue) NixValue {
 	s := NewSet(2)
 	s.Bind1(sym1, value(val1))
 	s.Bind1(sym2, value(val2))
-	return s.finish()
+	return SetValue(s.finish())
 }

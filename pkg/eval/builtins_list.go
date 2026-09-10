@@ -28,7 +28,7 @@ func bConcatLists(args ...*Expression) NixValue {
 	for _, x := range lists {
 		result = append(result, assertList(x.Eval())...)
 	}
-	return result
+	return ListValue(result)
 }
 
 func bElem(args ...*Expression) NixValue {
@@ -59,7 +59,7 @@ func bFilter(args ...*Expression) NixValue {
 			result = append(result, x)
 		}
 	}
-	return result
+	return ListValue(result)
 }
 
 // bFoldl is builtins.foldl', which forces the accumulator at every step.
@@ -88,10 +88,10 @@ func bGenList(args ...*Expression) NixValue {
 	// the same age and have the same lifetime as the list itself.
 	idx := make([]Expression, n)
 	for i := range result {
-		idx[i].Value = NixInt(i)
+		idx[i].setValue(Int(int64(i)))
 		result[i] = f.Apply(&idx[i])
 	}
-	return result
+	return ListValue(result)
 }
 
 func bHead(args ...*Expression) NixValue {
@@ -103,7 +103,7 @@ func bHead(args ...*Expression) NixValue {
 }
 
 func bLength(args ...*Expression) NixValue {
-	return NixInt(len(assertList(args[0].Eval())))
+	return Int(int64(len(assertList(args[0].Eval()))))
 }
 
 func bMap(args ...*Expression) NixValue {
@@ -114,7 +114,7 @@ func bMap(args ...*Expression) NixValue {
 		// The mapped value stays a thunk: mapping does not force anything.
 		result[i] = f.Apply(x)
 	}
-	return result
+	return ListValue(result)
 }
 
 func bPartition(args ...*Expression) NixValue {
@@ -129,7 +129,7 @@ func bPartition(args ...*Expression) NixValue {
 			wrong = append(wrong, x)
 		}
 	}
-	return pair(symRight, right, symWrong, wrong)
+	return pair(symRight, ListValue(right), symWrong, ListValue(wrong))
 }
 
 // bSort sorts with a strict less-than comparator, keeping equal elements in
@@ -142,7 +142,7 @@ func bSort(args ...*Expression) NixValue {
 	sort.SliceStable(result, func(i, j int) bool {
 		return bool(assertBool(apply2(f, result[i], result[j]).Eval()))
 	})
-	return result
+	return ListValue(result)
 }
 
 func bTail(args ...*Expression) NixValue {
@@ -150,5 +150,5 @@ func bTail(args ...*Expression) NixValue {
 	if len(list) == 0 {
 		throwf(ErrEval, "cannot take the tail of an empty list")
 	}
-	return list[1:]
+	return ListValue(list[1:])
 }

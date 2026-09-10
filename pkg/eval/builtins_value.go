@@ -21,19 +21,19 @@ func bDiv(args ...*Expression) NixValue { return Arith(args[0].Eval(), args[1].E
 
 // bLessThan orders values the way the < operator does.
 func bLessThan(args ...*Expression) NixValue {
-	return NixBool(CompareOrder(args[0].Eval(), args[1].Eval()) < 0)
+	return Bool(CompareOrder(args[0].Eval(), args[1].Eval()) < 0)
 }
 
 func bBitAnd(args ...*Expression) NixValue {
-	return assertInt(args[0].Eval()) & assertInt(args[1].Eval())
+	return Int(assertInt(args[0].Eval()) & assertInt(args[1].Eval()))
 }
 
 func bBitOr(args ...*Expression) NixValue {
-	return assertInt(args[0].Eval()) | assertInt(args[1].Eval())
+	return Int(assertInt(args[0].Eval()) | assertInt(args[1].Eval()))
 }
 
 func bBitXor(args ...*Expression) NixValue {
-	return assertInt(args[0].Eval()) ^ assertInt(args[1].Eval())
+	return Int(assertInt(args[0].Eval()) ^ assertInt(args[1].Eval()))
 }
 
 // bCeil and bFloor accept an integer as well, where they are the identity.
@@ -46,11 +46,10 @@ func bFloor(args ...*Expression) NixValue {
 }
 
 func roundTo(val NixValue, round func(float64) float64) NixValue {
-	f, ok := toFloat(val)
-	if !ok {
+	if !val.IsNumber() {
 		throwf(ErrType, "value is %s while a number was expected", anTypeName(val))
 	}
-	return NixInt(round(float64(f)))
+	return Int(int64(round(val.toFloat())))
 }
 
 // bCompareVersions implements Nix version ordering: versions are split into
@@ -68,10 +67,10 @@ func bCompareVersions(args ...*Expression) NixValue {
 			y = b[i]
 		}
 		if c := compareVersionComponent(x, y); c != 0 {
-			return NixInt(c)
+			return Int(int64(c))
 		}
 	}
-	return NixInt(0)
+	return Int(0)
 }
 
 func splitVersion(s string) []string {
@@ -135,20 +134,19 @@ func sign(n int) int {
 
 func bTypeOf(args ...*Expression) NixValue { return String(TypeName(args[0].Eval())) }
 
-func isType[T NixValue](x *Expression) NixValue {
-	_, ok := x.Eval().(T)
-	return NixBool(ok)
-}
+// isKind is the shape of every builtins.isX: force the argument and say what
+// kind came back.
+func isKind(x *Expression, kind Kind) NixValue { return Bool(x.Eval().Kind() == kind) }
 
-func bIsAttrs(args ...*Expression) NixValue    { return isType[NixSet](args[0]) }
-func bIsBool(args ...*Expression) NixValue     { return isType[NixBool](args[0]) }
-func bIsFloat(args ...*Expression) NixValue    { return isType[NixFloat](args[0]) }
-func bIsFunction(args ...*Expression) NixValue { return isType[NixLambda](args[0]) }
-func bIsInt(args ...*Expression) NixValue      { return isType[NixInt](args[0]) }
-func bIsList(args ...*Expression) NixValue     { return isType[NixList](args[0]) }
-func bIsNull(args ...*Expression) NixValue     { return isType[*NixNull](args[0]) }
-func bIsPath(args ...*Expression) NixValue     { return isType[*NixPath](args[0]) }
-func bIsString(args ...*Expression) NixValue   { return isType[*NixString](args[0]) }
+func bIsAttrs(args ...*Expression) NixValue    { return isKind(args[0], KindSet) }
+func bIsBool(args ...*Expression) NixValue     { return isKind(args[0], KindBool) }
+func bIsFloat(args ...*Expression) NixValue    { return isKind(args[0], KindFloat) }
+func bIsFunction(args ...*Expression) NixValue { return Bool(args[0].Eval().IsLambda()) }
+func bIsInt(args ...*Expression) NixValue      { return isKind(args[0], KindInt) }
+func bIsList(args ...*Expression) NixValue     { return isKind(args[0], KindList) }
+func bIsNull(args ...*Expression) NixValue     { return isKind(args[0], KindNull) }
+func bIsPath(args ...*Expression) NixValue     { return isKind(args[0], KindPath) }
+func bIsString(args ...*Expression) NixValue   { return isKind(args[0], KindString) }
 
 // Evaluation control.
 
@@ -164,13 +162,13 @@ func bDeepSeq(args ...*Expression) NixValue {
 
 // deepForce evaluates a value and everything reachable from it.
 func deepForce(val NixValue) {
-	switch v := val.(type) {
-	case NixList:
-		for _, x := range v {
+	switch val.Kind() {
+	case KindList:
+		for _, x := range val.List() {
 			deepForce(x.Eval())
 		}
-	case NixSet:
-		for _, a := range v.attrs {
+	case KindSet:
+		for _, a := range val.Set().attrs {
 			deepForce(a.x.Eval())
 		}
 	}
@@ -178,13 +176,13 @@ func deepForce(val NixValue) {
 
 func bThrow(args ...*Expression) NixValue {
 	throwf(ErrThrown, "%s", assertString(args[0].Eval()).Content)
-	return nil
+	return NixValue{}
 }
 
 func bAbort(args ...*Expression) NixValue {
 	throwf(ErrAborted, "evaluation aborted with the following error message: '%s'",
 		assertString(args[0].Eval()).Content)
-	return nil
+	return NixValue{}
 }
 
 // bTryEval evaluates its argument shallowly, reporting failure instead of
@@ -213,8 +211,8 @@ func bTrace(args ...*Expression) NixValue {
 // printTraced renders a traced value the way Nix does: strings unquoted,
 // everything else printed one level deep.
 func printTraced(val NixValue) string {
-	if s, ok := val.(*NixString); ok {
-		return s.Content
+	if val.Kind() == KindString {
+		return val.Str().Content
 	}
 	return val.Print(1)
 }

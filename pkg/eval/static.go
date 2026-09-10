@@ -83,7 +83,7 @@ type file struct {
 // literal returns the value of a literal node, computing it at most once.
 func (scope *Scope) literal(n *p.Node, compute func(string) NixValue) NixValue {
 	e := scope.file.static.get(n.ID)
-	if e.val == nil {
+	if e.val.IsNone() {
 		e.val = compute(scope.file.parser.TokenString(n.Tokens[0]))
 	}
 	return e.val

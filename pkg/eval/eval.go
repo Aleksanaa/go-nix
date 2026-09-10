@@ -36,7 +36,7 @@ func EvalIn(scope *Scope, pr *p.Parser) (NixValue, error) {
 // `x = <something that fails>` legal until x is used, just as a `let` is.
 func Delay(scope *Scope, pr *p.Parser) *Expression {
 	x := newExpr()
-	x.Scope, x.Node = scope.ForFile(pr), pr.Result
+	x.setThunk(scope.ForFile(pr), pr.Result)
 	return x
 }
 
@@ -68,7 +68,7 @@ func catching[T any](f func() T) (result T, err error) {
 func EvalString(s string) (NixValue, error) {
 	pr, err := p.ParseString(s)
 	if err != nil {
-		return nil, err
+		return NixValue{}, err
 	}
 	return Eval(pr)
 }
@@ -78,7 +78,8 @@ func EvalString(s string) (NixValue, error) {
 // expression to evaluate in its stead — one that already exists, and that
 // something else may be holding.
 func (x *Expression) resolve() *Expression {
-	n := x.Node
+	n := x.node()
+	scope := x.scope()
 	switch nt := n.Type; nt {
 	default:
 		throwf(ErrEval, "unsupported expression: %v", nt)
@@ -86,52 +87,52 @@ func (x *Expression) resolve() *Expression {
 	// A literal is the same value however often it is evaluated, so each of
 	// these is worked out once and kept against the node.
 	case p.URINode:
-		x.Value = x.Scope.literal(n, func(s string) NixValue { return String(s) })
+		x.setValue(scope.literal(n, func(s string) NixValue { return String(s) }))
 
 	case p.PathNode:
 		// TODO: resolve relative to the file being evaluated, and <lookup>
 		// paths through NIX_PATH.
-		x.Value = x.Scope.literal(n, func(s string) NixValue {
-			return &NixPath{Root: "/", Path: s}
-		})
+		x.setValue(scope.literal(n, func(s string) NixValue {
+			return PathValue(&NixPath{Root: "/", Path: s})
+		}))
 
 	case p.FloatNode:
-		x.Value = x.Scope.literal(n, func(s string) NixValue {
+		x.setValue(scope.literal(n, func(s string) NixValue {
 			val, err := strconv.ParseFloat(s, 64)
 			if err != nil {
 				throwf(ErrSyntax, "invalid float %q", s)
 			}
-			return NixFloat(val)
-		})
+			return Float(val)
+		}))
 
 	case p.IntNode:
-		x.Value = x.Scope.literal(n, func(s string) NixValue {
+		x.setValue(scope.literal(n, func(s string) NixValue {
 			val, err := strconv.ParseInt(s, 10, 64)
 			if err != nil {
 				throwf(ErrSyntax, "invalid integer %q", s)
 			}
-			return NixInt(val)
-		})
+			return Int(val)
+		}))
 
 	case p.StringNode, p.IStringNode:
-		x.Value = x.evalString()
+		x.setValue(x.evalString())
 
 	case p.IDNode:
-		sym, y, ok := x.Scope.lookupNode(n)
+		sym, y, ok := scope.lookupNode(n)
 		if !ok {
 			throwf(ErrUndefinedVariable, "undefined variable '%s'", sym)
 		}
 		return y
 
 	case p.ParensNode:
-		x.continueAt(n.Nodes[0], x.Scope)
+		x.continueAt(n.Nodes[0], scope)
 
 	case p.ListNode:
 		list := make(NixList, len(n.Nodes))
 		for i, c := range n.Nodes {
-			list[i] = x.WithNode(c).blaming(blameListElem)
+			list[i] = newScoped(scope, c).blaming(blameListElem)
 		}
-		x.Value = list
+		x.setValue(ListValue(list))
 
 	case p.SetNode, p.RecSetNode, p.LetNode:
 		x.evalBinds(nt)
@@ -141,24 +142,24 @@ func (x *Expression) resolve() *Expression {
 
 	case p.WithNode:
 		attrs := assertSet(x.evalNodeAs(n.Nodes[0], blameWith))
-		x.continueAt(n.Nodes[1], x.Scope.Subscope(attrs, true))
+		x.continueAt(n.Nodes[1], scope.Subscope(attrs, true))
 
 	case p.IfNode:
 		cond := assertBool(x.evalNodeAs(n.Nodes[0], blameCond))
 		if cond {
-			x.continueAt(n.Nodes[1], x.Scope)
+			x.continueAt(n.Nodes[1], scope)
 		} else {
-			x.continueAt(n.Nodes[2], x.Scope)
+			x.continueAt(n.Nodes[2], scope)
 		}
 
 	case p.AssertNode:
 		if !assertBool(x.evalNodeAs(n.Nodes[0], blameAssert)) {
 			throwf(ErrAssertion, "assertion '%s' failed", x.parser().NodeString(n.Nodes[0]))
 		}
-		x.continueAt(n.Nodes[1], x.Scope)
+		x.continueAt(n.Nodes[1], scope)
 
 	case p.FunctionNode:
-		x.Value = x.evalFunction()
+		x.setValue(x.evalFunction())
 
 	case p.ApplyNode:
 		// `f a b` parses as `(f a) b` and is applied in one step, so that the
@@ -179,13 +180,13 @@ func (x *Expression) resolve() *Expression {
 		}
 
 	case p.OpNegateNode, p.OpNotNode, p.OpQuestionNode:
-		x.Value = x.evalUnaryOp(nt)
+		x.setValue(x.evalUnaryOp(nt))
 
 	case p.OpAddNode, p.OpReduceNode, p.OpMultiplyNode, p.OpDivideNode,
 		p.OpGreaterNode, p.OpLessNode, p.OpGeqNode, p.OpLeqNode,
 		p.OpConcatNode, p.OpUpdateNode, p.OpAndNode, p.OpOrNode, p.OpImplNode,
 		p.OpEqNode, p.OpNeqNode:
-		x.Value = x.evalBinaryOp(nt)
+		x.setValue(x.evalBinaryOp(nt))
 	}
 	return nil
 }
@@ -194,11 +195,11 @@ func (x *Expression) resolve() *Expression {
 // interpolation in it is a literal like any other, and is kept against the
 // node rather than rebuilt on every evaluation.
 func (x *Expression) evalString() NixValue {
-	entry := x.Scope.file.static.get(x.Node.ID)
-	if entry.val != nil {
+	entry := x.scope().file.static.get(x.node().ID)
+	if !entry.val.IsNone() {
 		return entry.val
 	}
-	if x.Node.Type == p.IStringNode {
+	if x.node().Type == p.IStringNode {
 		return x.evalIndentedString(entry)
 	}
 	// A quoted string is built as it is read: what a piece contributes does
@@ -207,7 +208,7 @@ func (x *Expression) evalString() NixValue {
 	result := &NixString{}
 	var b strings.Builder
 	b.Grow(x.stringSize())
-	for _, c := range x.Node.Nodes {
+	for _, c := range x.node().Nodes {
 		switch c.Type {
 		default:
 			throwf(ErrEval, "unsupported string part: %v", c.Type)
@@ -222,10 +223,11 @@ func (x *Expression) evalString() NixValue {
 		}
 	}
 	result.Content = b.String()
+	val := StrValue(result)
 	if !interpolated {
-		entry.val = result
+		entry.val = val
 	}
-	return result
+	return val
 }
 
 // stringSize guesses how long the string will be, so that building it does not
@@ -233,7 +235,7 @@ func (x *Expression) evalString() NixValue {
 // interpolation is guessed at.
 func (x *Expression) stringSize() int {
 	n := 0
-	for _, c := range x.Node.Nodes {
+	for _, c := range x.node().Nodes {
 		if c.Type == p.TextNode {
 			n += len(x.parser().TokenBytes(c.Tokens[0]))
 		} else {
@@ -248,8 +250,8 @@ func (x *Expression) stringSize() int {
 // is decided by all of them together.
 func (x *Expression) evalIndentedString(entry *static) NixValue {
 	interpolated := false
-	parts := make([]stringPart, 0, len(x.Node.Nodes))
-	for _, c := range x.Node.Nodes {
+	parts := make([]stringPart, 0, len(x.node().Nodes))
+	for _, c := range x.node().Nodes {
 		switch c.Type {
 		default:
 			throwf(ErrEval, "unsupported string part: %v", c.Type)
@@ -274,22 +276,23 @@ func (x *Expression) evalIndentedString(entry *static) NixValue {
 		b.WriteString(unescapeIndented(part.text))
 	}
 	result.Content = b.String()
+	val := StrValue(result)
 	if !interpolated {
-		entry.val = result
+		entry.val = val
 	}
-	return result
+	return val
 }
 
 // evalBinds evaluates a set, a recursive set, or the bindings of a `let`.
 func (x *Expression) evalBinds(nt p.NodeType) {
-	n := x.Node
+	n := x.node()
 	bindNodes := n.Nodes
 	if nt == p.LetNode {
 		bindNodes = n.Nodes[0].Nodes
 	}
 	// Inherited bindings make the set larger than this estimate.
 	set := NewSet(len(bindNodes))
-	scope := x.Scope
+	scope := x.scope()
 	if nt == p.RecSetNode || nt == p.LetNode {
 		// A recursive set and a `let` are in scope of their own bindings.
 		scope = scope.Subscope(set, false)
@@ -308,7 +311,7 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 			// `inherit a;` is `a = a;` evaluated in the enclosing scope.
 			for _, id := range c.Nodes[0].Nodes {
 				y := x.WithNode(id)
-				sym := x.Scope.attrSym(id)
+				sym := x.scope().attrSym(id)
 				set.Bind1(sym, y.blamingAttr(sym))
 			}
 
@@ -317,7 +320,7 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 			// shared by every name inherited from it.
 			from := x.WithScoped(c.Nodes[0], scope)
 			for _, id := range c.Nodes[1].Nodes {
-				sym := x.Scope.attrSym(id)
+				sym := x.scope().attrSym(id)
 				set.Bind1(sym, from.selectAttr(sym).blamingAttr(sym))
 			}
 		}
@@ -329,15 +332,15 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 	if nt == p.LetNode {
 		x.continueAt(n.Nodes[1], scope)
 	} else {
-		x.Value = set
+		x.setValue(SetValue(set))
 	}
 }
 
 // evalSelect evaluates `e.a.b` and `e.a.b or fallback`, returning the
 // expression the path selects.
 func (x *Expression) evalSelect(nt p.NodeType) *Expression {
-	n := x.Node
-	attrpath := x.Scope.evalAttrPath(n.Nodes[1])
+	n := x.node()
+	attrpath := x.scope().evalAttrPath(n.Nodes[1])
 	var or *Expression
 	if nt == p.SelectOrNode {
 		or = x.WithNode(n.Nodes[2])
@@ -348,9 +351,9 @@ func (x *Expression) evalSelect(nt p.NodeType) *Expression {
 	expr := x.WithNode(n.Nodes[0]).blaming(blameSelect)
 	for _, sym := range attrpath {
 		// As in Nix, `or` also covers selecting from a non-set.
-		set, ok := expr.Eval().(NixSet)
-		if ok {
-			if y, found := set.Get(sym); found {
+		val := expr.Eval()
+		if val.Kind() == KindSet {
+			if y, found := val.Set().Get(sym); found {
 				expr = y
 				continue
 			}
@@ -359,8 +362,8 @@ func (x *Expression) evalSelect(nt p.NodeType) *Expression {
 			expr = or
 			break
 		}
-		if !ok {
-			throwf(ErrType, "value is %s while a set was expected", anTypeName(expr.Value))
+		if val.Kind() != KindSet {
+			throwf(ErrType, "value is %s while a set was expected", anTypeName(val))
 		}
 		throwf(ErrMissingAttribute, "attribute '%s' missing", sym)
 	}
@@ -375,7 +378,7 @@ func (x *Expression) evalSelect(nt p.NodeType) *Expression {
 // afresh on each call, and rebuilding the formal-argument map with it was one
 // of the largest sources of allocation in the evaluator.
 func (x *Expression) evalFunction() NixValue {
-	return &NixExprLambda{lambdaInfo: x.Scope.lambdaInfo(x.Node), Scope: x.Scope}
+	return LambdaValue(&NixExprLambda{lambdaInfo: x.scope().lambdaInfo(x.node()), Scope: x.scope()})
 }
 
 // lambdaInfo describes a function node: the names it binds and where its body

@@ -312,13 +312,12 @@ func TestStringLiterals(t *testing.T) {
 			t.Errorf("%s\nunexpected error: %v", test[0], err)
 			continue
 		}
-		str, ok := val.(*NixString)
-		if !ok {
+		if val.Kind() != KindString {
 			t.Errorf("%s: got %s, want a string", test[0], TypeName(val))
 			continue
 		}
-		if str.Content != test[1] {
-			t.Errorf("%s\n got: %q\nwant: %q", test[0], str.Content, test[1])
+		if got := val.Str().Content; got != test[1] {
+			t.Errorf("%s\n got: %q\nwant: %q", test[0], got, test[1])
 		}
 	}
 }

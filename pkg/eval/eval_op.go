@@ -6,20 +6,20 @@ import (
 
 // operand evaluates the i-th child of the current node.
 func (x *Expression) operand(i int) NixValue {
-	return x.evalNode(x.Node.Nodes[i])
+	return x.evalNode(x.node().Nodes[i])
 }
 
 func (x *Expression) evalUnaryOp(nt p.NodeType) NixValue {
 	switch nt {
 	case p.OpNotNode:
-		return !assertBool(x.operand(0))
+		return Bool(!assertBool(x.operand(0)))
 
 	case p.OpNegateNode:
-		switch v := x.operand(0).(type) {
-		case NixInt:
-			return -v
-		case NixFloat:
-			return -v
+		switch v := x.operand(0); v.Kind() {
+		case KindInt:
+			return Int(-v.Int())
+		case KindFloat:
+			return Float(-v.Float())
 		default:
 			throwf(ErrType, "value is %s while a number was expected", anTypeName(v))
 		}
@@ -28,13 +28,12 @@ func (x *Expression) evalUnaryOp(nt p.NodeType) NixValue {
 		// `e ? a.b` tests for an attribute path without forcing the value it
 		// finds; a non-set anywhere along the path simply makes it false.
 		val := x.operand(0)
-		path := x.Scope.evalAttrPath(x.Node.Nodes[1])
+		path := x.scope().evalAttrPath(x.node().Nodes[1])
 		for i, sym := range path {
-			set, ok := val.(NixSet)
-			if !ok {
+			if val.Kind() != KindSet {
 				return False
 			}
-			y, found := set.Get(sym)
+			y, found := val.Set().Get(sym)
 			if !found {
 				return False
 			}
@@ -47,7 +46,7 @@ func (x *Expression) evalUnaryOp(nt p.NodeType) NixValue {
 		return True
 	}
 	throwf(ErrEval, "unsupported unary operator: %v", nt)
-	return nil
+	return NixValue{}
 }
 
 func (x *Expression) evalBinaryOp(nt p.NodeType) NixValue {
@@ -56,21 +55,21 @@ func (x *Expression) evalBinaryOp(nt p.NodeType) NixValue {
 	// forced when the left one does not already decide the answer.
 	case p.OpAndNode:
 		if !assertBool(x.operand(0)) {
-			return NixBool(false)
+			return False
 		}
-		return assertBool(x.operand(1))
+		return Bool(assertBool(x.operand(1)))
 
 	case p.OpOrNode:
 		if assertBool(x.operand(0)) {
-			return NixBool(true)
+			return True
 		}
-		return assertBool(x.operand(1))
+		return Bool(assertBool(x.operand(1)))
 
 	case p.OpImplNode:
 		if !assertBool(x.operand(0)) {
-			return NixBool(true)
+			return True
 		}
-		return assertBool(x.operand(1))
+		return Bool(assertBool(x.operand(1)))
 	}
 
 	lhs, rhs := x.operand(0), x.operand(1)
@@ -79,28 +78,28 @@ func (x *Expression) evalBinaryOp(nt p.NodeType) NixValue {
 		return Add(lhs, rhs)
 
 	case p.OpConcatNode:
-		return assertList(lhs).Concat(assertList(rhs))
+		return ListValue(assertList(lhs).Concat(assertList(rhs)))
 
 	case p.OpUpdateNode:
-		return assertSet(lhs).Update(assertSet(rhs))
+		return SetValue(assertSet(lhs).Update(assertSet(rhs)))
 
 	case p.OpEqNode:
-		return NixBool(lhs.Compare(rhs))
+		return Bool(lhs.Compare(rhs))
 
 	case p.OpLessNode:
-		return NixBool(CompareOrder(lhs, rhs) < 0)
+		return Bool(CompareOrder(lhs, rhs) < 0)
 
 	case p.OpGreaterNode:
-		return NixBool(CompareOrder(lhs, rhs) > 0)
+		return Bool(CompareOrder(lhs, rhs) > 0)
 
 	case p.OpLeqNode:
-		return NixBool(CompareOrder(lhs, rhs) <= 0)
+		return Bool(CompareOrder(lhs, rhs) <= 0)
 
 	case p.OpGeqNode:
-		return NixBool(CompareOrder(lhs, rhs) >= 0)
+		return Bool(CompareOrder(lhs, rhs) >= 0)
 
 	case p.OpNeqNode:
-		return NixBool(!lhs.Compare(rhs))
+		return Bool(!lhs.Compare(rhs))
 
 	default:
 		return Arith(lhs, rhs, nt)

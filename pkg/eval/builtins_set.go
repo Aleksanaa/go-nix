@@ -8,7 +8,7 @@ func bAttrNames(args ...*Expression) NixValue {
 	for _, sym := range set.Keys() {
 		result = append(result, value(String(sym.String())))
 	}
-	return result
+	return ListValue(result)
 }
 
 func bAttrValues(args ...*Expression) NixValue {
@@ -18,7 +18,7 @@ func bAttrValues(args ...*Expression) NixValue {
 		x, _ := set.Get(sym)
 		result = append(result, x)
 	}
-	return result
+	return ListValue(result)
 }
 
 // bCatAttrs collects an attribute from every set of a list that has it.
@@ -31,24 +31,24 @@ func bCatAttrs(args ...*Expression) NixValue {
 			result = append(result, y)
 		}
 	}
-	return result
+	return ListValue(result)
 }
 
 func bFunctionArgs(args ...*Expression) NixValue {
 	val := args[0].Eval()
-	f, ok := val.(*NixExprLambda)
-	if !ok {
-		if _, ok := val.(NixLambda); ok {
+	if val.Kind() != KindLambda {
+		if val.IsLambda() {
 			// A builtin has no formal arguments to report.
-			return NewSet(0)
+			return SetValue(NewSet(0))
 		}
 		throwf(ErrType, "value is %s while a function was expected", anTypeName(val))
 	}
+	f := val.Lambda().(*NixExprLambda)
 	result := NewSet(len(f.Formal))
 	for sym, def := range f.Formal {
-		result.Bind1(sym, value(NixBool(def != nil)))
+		result.Bind1(sym, value(Bool(def != nil)))
 	}
-	return result.finish()
+	return SetValue(result.finish())
 }
 
 func bGetAttr(args ...*Expression) NixValue {
@@ -71,14 +71,14 @@ func bGroupBy(args ...*Expression) NixValue {
 	}
 	result := NewSet(len(groups))
 	for sym, group := range groups {
-		result.Bind1(sym, value(group))
+		result.Bind1(sym, value(ListValue(group)))
 	}
-	return result.finish()
+	return SetValue(result.finish())
 }
 
 func bHasAttr(args ...*Expression) NixValue {
 	sym := Intern(assertString(args[0].Eval()).Content)
-	return NixBool(assertSet(args[1].Eval()).Has(sym))
+	return Bool(assertSet(args[1].Eval()).Has(sym))
 }
 
 func bIntersectAttrs(args ...*Expression) NixValue {
@@ -98,7 +98,7 @@ func bIntersectAttrs(args ...*Expression) NixValue {
 			result, i, j = append(result, b), i+1, j+1
 		}
 	}
-	return setOf(result)
+	return SetValue(setOf(result))
 }
 
 // bListToAttrs builds a set from a list of { name, value } sets. As in Nix,
@@ -119,7 +119,7 @@ func bListToAttrs(args ...*Expression) NixValue {
 		}
 		result.Bind1(Intern(assertString(nameExpr.Eval()).Content), valExpr)
 	}
-	return result.keepFirst()
+	return SetValue(result.keepFirst())
 }
 
 func bRemoveAttrs(args ...*Expression) NixValue {
@@ -135,5 +135,5 @@ func bRemoveAttrs(args ...*Expression) NixValue {
 			result = append(result, a)
 		}
 	}
-	return setOf(result)
+	return SetValue(setOf(result))
 }

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"unsafe"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
@@ -48,25 +49,26 @@ func (b blameKind) describe(sym Sym) string {
 }
 
 // Expression is a thunk: an unevaluated expression together with the scope it
-// closes over, memoizing its value once forced.
+// closes over, holding its value once forced.
 //
-// Exactly one of the following describes how the value is produced:
-//   - Value is already known,
-//   - Native computes it in Go (used by builtins),
-//   - Node describes a piece of syntax to evaluate, in Scope.
+// The two words a and b are read according to kind, which is what keeps a
+// thunk down to 32 bytes — the single most numerous object an evaluation
+// allocates, so its size decides how much of a run is spent in the garbage
+// collector:
 //
-// Resolving the last case may point the expression at another node to carry on
-// with in place, or hand back an expression to evaluate in its stead (a
-// selected attribute, the binding a name refers to); the value is cached here
-// either way, so a chain is only ever walked once.
+//	kind == KindNone, b != nil   a is the scope and b the node to evaluate
+//	kind == KindNone, b == nil   a is a builtin call to run
+//	kind != KindNone             the value, whose pointer is a and whose
+//	                             word — an integer, a list's length — is num
 //
-// The field order is chosen to keep the struct at 64 bytes, since evaluating
-// anything substantial allocates millions of these.
+// Resolving a node may point the expression at another one to carry on with in
+// place, or hand back an expression to evaluate in its stead (a selected
+// attribute, the binding a name refers to); the value is kept here either way,
+// so a chain is only ever walked once.
 type Expression struct {
-	Value  NixValue
-	Native *nativeCall
-	Scope  *Scope
-	Node   *p.Node
+	a, b unsafe.Pointer
+	num  int64
+	kind Kind
 
 	// blame says what a backtrace should call this frame. What it needs
 	// besides the kind — the name of an attribute, the function a call
@@ -74,6 +76,48 @@ type Expression struct {
 	// rather than in every expression that mentions it.
 	blame   blameKind
 	forcing bool
+}
+
+// Val is the value this expression has been forced to, or no value at all.
+func (x *Expression) Val() NixValue {
+	return NixValue{ptr: x.a, num: x.num, kind: x.kind}
+}
+
+// setValue records the value the expression has been forced to, which also
+// releases the scope and the node that produced it: they are no longer part of
+// what this expression is.
+func (x *Expression) setValue(v NixValue) {
+	x.a, x.b, x.num, x.kind = v.ptr, nil, v.num, v.kind
+}
+
+// scope is the scope an unforced expression evaluates in.
+func (x *Expression) scope() *Scope {
+	if x.kind != KindNone || x.b == nil {
+		return nil
+	}
+	return (*Scope)(x.a)
+}
+
+// node is the syntax an unforced expression evaluates, or nil for a builtin
+// call and for one that has been forced already.
+func (x *Expression) node() *p.Node {
+	if x.kind != KindNone {
+		return nil
+	}
+	return (*p.Node)(x.b)
+}
+
+// native is the builtin call an unforced expression runs, if it is one.
+func (x *Expression) native() *nativeCall {
+	if x.kind != KindNone || x.b != nil {
+		return nil
+	}
+	return (*nativeCall)(x.a)
+}
+
+// setThunk points the expression at a node to evaluate in a scope.
+func (x *Expression) setThunk(scope *Scope, n *p.Node) {
+	x.a, x.b = unsafe.Pointer(scope), unsafe.Pointer(n)
 }
 
 // exprSlabSize is how many expressions are allocated at a time, or 1 to
@@ -111,17 +155,14 @@ func newExpr() *Expression {
 // parser is the parser the expression's node belongs to. It is reached through
 // the scope rather than stored per expression, of which there are far more.
 func (x *Expression) parser() *p.Parser {
-	if x.Scope == nil {
-		return nil
-	}
-	return x.Scope.parser()
+	return x.scope().parser()
 }
 
 // WithNode derives an unevaluated expression for a sibling node, in the same
 // scope.
 func (x *Expression) WithNode(n *p.Node) *Expression {
 	y := newExpr()
-	y.Scope, y.Node = x.Scope, n
+	y.setThunk(x.scope(), n)
 	return y
 }
 
@@ -133,7 +174,7 @@ func (x *Expression) WithScoped(n *p.Node, scope *Scope) *Expression {
 // newScoped is an unevaluated expression for a node in a scope.
 func newScoped(scope *Scope, n *p.Node) *Expression {
 	y := newExpr()
-	y.Scope, y.Node = scope, n
+	y.setThunk(scope, n)
 	return y
 }
 
@@ -149,11 +190,12 @@ func (x *Expression) blaming(kind blameKind) *Expression {
 // have to carry a field for it.
 func (x *Expression) blamingAttr(sym Sym) *Expression {
 	x.blame = blameAttr
-	switch {
-	case x.Native != nil:
-		x.Native.sym = sym
-	case x.Node != nil:
-		x.Scope.file.static.get(x.Node.ID).attrSym = sym
+	if c := x.native(); c != nil {
+		c.sym = sym
+		return x
+	}
+	if n := x.node(); n != nil {
+		x.scope().file.static.get(n.ID).attrSym = sym
 	}
 	return x
 }
@@ -162,10 +204,11 @@ func (x *Expression) blamingAttr(sym Sym) *Expression {
 // builtin thunk, or a value constructed by Go).
 func (x *Expression) Pos() *p.LexPosition {
 	pr := x.parser()
-	if pr == nil || x.Node == nil {
+	n := x.node()
+	if pr == nil || n == nil {
 		return nil
 	}
-	return pr.NodePos(x.Node)
+	return pr.NodePos(n)
 }
 
 // parser is the file the frame's node was parsed from, or nil for a frame with
@@ -216,8 +259,8 @@ func (f evalFrame) traceFrame() Frame {
 
 // Eval forces the expression to a value, memoizing the result.
 func (x *Expression) Eval() NixValue {
-	if x.Value != nil {
-		return x.Value
+	if x.kind != KindNone {
+		return x.Val()
 	}
 	return x.force()
 }
@@ -274,20 +317,20 @@ func (x *Expression) force() NixValue {
 			throwf(ErrEval, "stack overflow; possible infinite recursion")
 		}
 		evalStack[evalDepth] = evalFrame{
-			scope: x.Scope, node: x.Node, native: x.Native, blame: x.blame,
+			scope: x.scope(), node: x.node(), native: x.native(), blame: x.blame,
 		}
 		evalDepth++
 
 		var lower *Expression
 		switch {
-		case x.Native != nil:
-			x.Value = x.Native.run()
-		case x.Node != nil:
+		case x.b != nil:
 			lower = x.resolve()
+		case x.a != nil:
+			x.setValue((*nativeCall)(x.a).run())
 		default:
 			throwf(ErrEval, "expression has nothing to evaluate")
 		}
-		if x.Value != nil {
+		if x.kind != KindNone {
 			break
 		}
 		if lower != nil {
@@ -296,25 +339,23 @@ func (x *Expression) force() NixValue {
 			// continuing in place) keeps every thunk on the stack, so that a
 			// cycle through several bindings is detected and each contributes
 			// a trace frame.
-			x.Value = lower.Eval()
+			x.setValue(lower.Eval())
 			break
 		}
 	}
-	// The thunk is now nothing but its value, so drop what only producing it
-	// needed. This releases the scope chain and the expressions underneath,
-	// which otherwise stay reachable for as long as the value does. The nodes
-	// are left alone: they belong to the parse tree, which outlives every
-	// value anyway, so clearing them would free nothing. Failure leaves
-	// everything in place: the expression is still unevaluated, and the error
-	// being raised is describing it from the evaluation stack.
-	x.Native, x.Scope = nil, nil
-	return x.Value
+	// Recording the value is also what releases the scope chain and the
+	// expressions underneath it, which would otherwise stay reachable for as
+	// long as the value does: the thunk is now nothing but what it evaluated
+	// to. Failure leaves everything in place — the expression is still
+	// unevaluated, and the error being raised describes it from the evaluation
+	// stack.
+	return x.Val()
 }
 
 // continueAt points the expression at the node to evaluate in its place, in
 // the scope that node belongs in. force picks it up from there.
 func (x *Expression) continueAt(n *p.Node, scope *Scope) {
-	x.Node, x.Scope = n, scope
+	x.setThunk(scope, n)
 }
 
 // continueIn is continueAt for a node the backtrace should describe, such as
@@ -334,14 +375,14 @@ func (x *Expression) finish(depth int) {
 // value wraps an already known value as an evaluated expression.
 func value(v NixValue) *Expression {
 	x := newExpr()
-	x.Value = v
+	x.setValue(v)
 	return x
 }
 
 // thunk wraps a Go computation as an unevaluated expression.
 func thunk(f func() NixValue) *Expression {
 	x := newExpr()
-	x.Native = &nativeCall{fn: f}
+	x.a = unsafe.Pointer(&nativeCall{fn: f})
 	return x
 }
 
@@ -374,11 +415,13 @@ func (c *nativeCall) run() NixValue {
 // arithmetic-heavy expression allocate nothing per operand. Where a value does
 // escape, the compiler falls back to allocating it, so this stays correct
 // wherever it is used.
-func (x *Expression) evalNode(n *p.Node) NixValue { return x.Scope.evalNode(n) }
+func (x *Expression) evalNode(n *p.Node) NixValue { return x.scope().evalNode(n) }
 
 // evalNodeAs is evalNode for an operand that a backtrace should name.
 func (x *Expression) evalNodeAs(n *p.Node, kind blameKind) NixValue {
-	y := Expression{Scope: x.Scope, Node: n, blame: kind}
+	var y Expression
+	y.setThunk(x.scope(), n)
+	y.blame = kind
 	return y.Eval()
 }
 
@@ -398,11 +441,11 @@ func (x *Expression) thunkFor(n *p.Node) *Expression {
 	case p.IDNode:
 		// A name the chain does not hold may still come from a `with`, whose
 		// set has not been evaluated yet, so that one stays a thunk.
-		if _, y, ok := x.Scope.lookupNode(n); ok {
+		if _, y, ok := x.scope().lookupNode(n); ok {
 			return y
 		}
 	case p.IntNode, p.FloatNode, p.PathNode, p.URINode:
-		return x.Scope.literalExpr(n)
+		return x.scope().literalExpr(n)
 	}
 	return x.WithNode(n)
 }

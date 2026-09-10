@@ -17,12 +17,12 @@ func bConcatStringsSep(args ...*Expression) NixValue {
 		result.absorb(str)
 	}
 	result.Content = strings.Join(parts, sep.Content)
-	return result
+	return StrValue(result)
 }
 
 func bStringLength(args ...*Expression) NixValue {
 	// Nix measures strings in bytes, not in characters.
-	return NixInt(len(CoerceToString(args[0].Eval()).Content))
+	return Int(int64(len(CoerceToString(args[0].Eval()).Content)))
 }
 
 // bSubstring returns the substring at [start, start+length). A length of -1
@@ -41,12 +41,12 @@ func bSubstring(args ...*Expression) NixValue {
 	if length >= 0 && start+length < end {
 		end = start + length
 	}
-	result := String(str.Content[start:end])
+	result := newString(str.Content[start:end])
 	result.absorb(str)
-	return result
+	return StrValue(result)
 }
 
-func bToString(args ...*Expression) NixValue { return ToString(args[0].Eval()) }
+func bToString(args ...*Expression) NixValue { return StrValue(ToString(args[0].Eval())) }
 
 // bReplaceStrings replaces every occurrence of each string in the first list
 // with the string at the same index of the second, scanning left to right and
@@ -86,7 +86,7 @@ func bReplaceStrings(args ...*Expression) NixValue {
 	}
 	result.Content = b.String()
 	result.absorb(str)
-	return result
+	return StrValue(result)
 }
 
 // bMatch matches an anchored POSIX regular expression, returning null when it
@@ -98,7 +98,7 @@ func bMatch(args ...*Expression) NixValue {
 	if m == nil || m[0] != 0 || m[1] != len(str.Content) {
 		return Null
 	}
-	return groupList(re, str.Content, m)
+	return ListValue(groupList(re, str.Content, m))
 }
 
 // bSplit splits a string on a regular expression. The result alternates
@@ -114,10 +114,10 @@ func bSplit(args ...*Expression) NixValue {
 		if m[1] == m[0] && m[0] == last && last != 0 {
 			continue // skip an empty match adjacent to the previous one
 		}
-		result = append(result, value(String(str[last:m[0]])), value(groupList(re, str, m)))
+		result = append(result, value(String(str[last:m[0]])), value(ListValue(groupList(re, str, m))))
 		last = m[1]
 	}
-	return append(result, value(String(str[last:])))
+	return ListValue(append(result, value(String(str[last:]))))
 }
 
 func compileRegex(pattern string) *regexp.Regexp {
