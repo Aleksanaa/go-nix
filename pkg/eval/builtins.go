@@ -1,6 +1,10 @@
 package eval
 
-import "unsafe"
+import (
+	"unsafe"
+
+	p "github.com/aleksanaa/go-nix/pkg/parser"
+)
 
 // A builtin is a primitive operation exposed through the `builtins` set.
 //
@@ -18,14 +22,14 @@ type builtin struct {
 
 var builtins = map[string]builtin{
 	// Arithmetic and comparison.
-	"add":      {2, bAdd, "Add two numbers.", false},
-	"sub":      {2, bSub, "Subtract the second number from the first.", false},
-	"mul":      {2, bMul, "Multiply two numbers.", false},
-	"div":      {2, bDiv, "Divide the first number by the second.", false},
+	"add":      {2, arithOp(p.OpAddNode), "Add two numbers.", false},
+	"sub":      {2, arithOp(p.OpReduceNode), "Subtract the second number from the first.", false},
+	"mul":      {2, arithOp(p.OpMultiplyNode), "Multiply two numbers.", false},
+	"div":      {2, arithOp(p.OpDivideNode), "Divide the first number by the second.", false},
 	"lessThan": {2, bLessThan, "Compare two numbers or strings.", false},
-	"bitAnd":   {2, bBitAnd, "Bitwise AND of two integers.", false},
-	"bitOr":    {2, bBitOr, "Bitwise OR of two integers.", false},
-	"bitXor":   {2, bBitXor, "Bitwise XOR of two integers.", false},
+	"bitAnd":   {2, bitOp(func(a, b int64) int64 { return a & b }), "Bitwise AND of two integers.", false},
+	"bitOr":    {2, bitOp(func(a, b int64) int64 { return a | b }), "Bitwise OR of two integers.", false},
+	"bitXor":   {2, bitOp(func(a, b int64) int64 { return a ^ b }), "Bitwise XOR of two integers.", false},
 	"ceil":     {1, bCeil, "Round a number up to an integer.", false},
 	"floor":    {1, bFloor, "Round a number down to an integer.", false},
 	"compareVersions": {2, bCompareVersions,

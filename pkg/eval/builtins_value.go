@@ -10,19 +10,12 @@ import (
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
-// Arithmetic.
-
-func bAdd(w *worker, args ...*Expression) NixValue {
-	return Arith(w, args[0].Eval(w), args[1].Eval(w), p.OpAddNode)
-}
-func bSub(w *worker, args ...*Expression) NixValue {
-	return Arith(w, args[0].Eval(w), args[1].Eval(w), p.OpReduceNode)
-}
-func bMul(w *worker, args ...*Expression) NixValue {
-	return Arith(w, args[0].Eval(w), args[1].Eval(w), p.OpMultiplyNode)
-}
-func bDiv(w *worker, args ...*Expression) NixValue {
-	return Arith(w, args[0].Eval(w), args[1].Eval(w), p.OpDivideNode)
+// arithOp is the builtin for add, sub, mul and div: an arithmetic operator
+// applied to two arguments, which Arith promotes the way `+` does.
+func arithOp(op p.NodeType) func(*worker, ...*Expression) NixValue {
+	return func(w *worker, args ...*Expression) NixValue {
+		return Arith(w, args[0].Eval(w), args[1].Eval(w), op)
+	}
 }
 
 // bLessThan orders values the way the < operator does.
@@ -30,16 +23,12 @@ func bLessThan(w *worker, args ...*Expression) NixValue {
 	return Bool(CompareOrder(w, args[0].Eval(w), args[1].Eval(w)) < 0)
 }
 
-func bBitAnd(w *worker, args ...*Expression) NixValue {
-	return Int(assertInt(w, args[0].Eval(w)) & assertInt(w, args[1].Eval(w)))
-}
-
-func bBitOr(w *worker, args ...*Expression) NixValue {
-	return Int(assertInt(w, args[0].Eval(w)) | assertInt(w, args[1].Eval(w)))
-}
-
-func bBitXor(w *worker, args ...*Expression) NixValue {
-	return Int(assertInt(w, args[0].Eval(w)) ^ assertInt(w, args[1].Eval(w)))
+// bitOp is the builtin for bitAnd, bitOr and bitXor: a bitwise operator
+// applied to two integers.
+func bitOp(op func(a, b int64) int64) func(*worker, ...*Expression) NixValue {
+	return func(w *worker, args ...*Expression) NixValue {
+		return Int(op(assertInt(w, args[0].Eval(w)), assertInt(w, args[1].Eval(w))))
+	}
 }
 
 // bCeil and bFloor accept an integer as well, where they are the identity.
