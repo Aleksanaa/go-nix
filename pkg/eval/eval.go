@@ -26,15 +26,15 @@ func Eval(pr *p.Parser) (NixValue, error) {
 // It is how the REPL evaluates an entry, so that the entry sees the names the
 // session has bound so far.
 func EvalIn(scope *Scope, pr *p.Parser) (NixValue, error) {
-	return catching(func() NixValue { return Delay(scope, pr).Eval() })
+	return catching(func() NixValue { return delay(mainWorker, scope, pr).Eval(mainWorker) })
 }
 
 // Delay returns a parsed expression as an unforced thunk in a scope.
 //
 // The REPL binds names to these rather than to values, which is what makes
 // `x = <something that fails>` legal until x is used, just as a `let` is.
-func Delay(scope *Scope, pr *p.Parser) *Expression {
-	x := newExpr()
+func delay(w *worker, scope *Scope, pr *p.Parser) *Expression {
+	x := w.newExpr()
 	x.setThunk(scope.ForFile(pr), pr.Result)
 	return x
 }
@@ -42,7 +42,7 @@ func Delay(scope *Scope, pr *p.Parser) *Expression {
 // Print renders a value, forcing it down to the given depth. A negative depth
 // forces it completely.
 func Print(val NixValue, depth int) (string, error) {
-	return catching(func() string { return val.Print(depth) })
+	return catching(func() string { return val.Print(mainWorker, depth) })
 }
 
 // catching runs f, turning an evaluation failure into an error. Any other
@@ -76,34 +76,34 @@ func EvalString(s string) (NixValue, error) {
 // expression at another node to continue with in place, or returns an
 // expression to evaluate in its stead — one that already exists, and that
 // something else may be holding.
-func (x *Expression) resolve() *Expression {
+func (x *Expression) resolve(w *worker) *Expression {
 	n := x.node()
 	scope := x.scope()
 	switch nt := n.Type; nt {
 	default:
-		throwf(ErrEval, "unsupported expression: %v", nt)
+		w.throwf(ErrEval, "unsupported expression: %v", nt)
 
 	// A literal is the same value however often it is evaluated, so each of
 	// these is worked out once and kept against the node.
 	case p.URINode:
-		x.setValue(scope.literal(n, uriLiteral))
+		x.setValue(scope.literal(w, n, uriLiteral))
 
 	case p.PathNode:
-		x.setValue(scope.literal(n, pathLiteral))
+		x.setValue(scope.literal(w, n, pathLiteral))
 
 	case p.FloatNode:
-		x.setValue(scope.literal(n, floatLiteral))
+		x.setValue(scope.literal(w, n, floatLiteral))
 
 	case p.IntNode:
-		x.setValue(scope.literal(n, intLiteral))
+		x.setValue(scope.literal(w, n, intLiteral))
 
 	case p.StringNode, p.IStringNode:
-		x.setValue(x.evalString())
+		x.setValue(x.evalString(w))
 
 	case p.IDNode:
 		sym, y, ok := scope.lookupNode(n)
 		if !ok {
-			throwf(ErrUndefinedVariable, "undefined variable '%s'", sym)
+			w.throwf(ErrUndefinedVariable, "undefined variable '%s'", sym)
 		}
 		return y
 
@@ -113,22 +113,22 @@ func (x *Expression) resolve() *Expression {
 	case p.ListNode:
 		list := make(NixList, len(n.Nodes))
 		for i, c := range n.Nodes {
-			list[i] = newScoped(scope, c).blaming(blameListElem)
+			list[i] = newScoped(w, scope, c).blaming(blameListElem)
 		}
 		x.setValue(ListValue(list))
 
 	case p.SetNode, p.RecSetNode, p.LetNode:
-		x.evalBinds(nt)
+		x.evalBinds(w, nt)
 
 	case p.SelectNode, p.SelectOrNode:
-		return x.evalSelect(nt)
+		return x.evalSelect(w, nt)
 
 	case p.WithNode:
-		attrs := assertSet(x.evalNodeAs(n.Nodes[0], blameWith))
-		x.continueAt(n.Nodes[1], scope.Subscope(attrs, true))
+		attrs := assertSet(w, x.evalNodeAs(w, n.Nodes[0], blameWith))
+		x.continueAt(n.Nodes[1], scope.subscope(w, attrs, true))
 
 	case p.IfNode:
-		cond := assertBool(x.evalNodeAs(n.Nodes[0], blameCond))
+		cond := assertBool(w, x.evalNodeAs(w, n.Nodes[0], blameCond))
 		if cond {
 			x.continueAt(n.Nodes[1], scope)
 		} else {
@@ -136,13 +136,13 @@ func (x *Expression) resolve() *Expression {
 		}
 
 	case p.AssertNode:
-		if !assertBool(x.evalNodeAs(n.Nodes[0], blameAssert)) {
-			throwf(ErrAssertion, "assertion '%s' failed", x.parser().NodeString(n.Nodes[0]))
+		if !assertBool(w, x.evalNodeAs(w, n.Nodes[0], blameAssert)) {
+			w.throwf(ErrAssertion, "assertion '%s' failed", x.parser().NodeString(n.Nodes[0]))
 		}
 		x.continueAt(n.Nodes[1], scope)
 
 	case p.FunctionNode:
-		x.setValue(x.evalFunction())
+		x.setValue(x.evalFunction(w))
 
 	case p.ApplyNode:
 		// `f a b c` parses as `((f a) b) c`; the whole chain is gathered so
@@ -154,23 +154,23 @@ func (x *Expression) resolve() *Expression {
 			head = head.Nodes[0]
 			k++
 		}
-		fn := assertLambda(x.evalNode(head))
+		fn := assertLambda(w, x.evalNode(w, head))
 		// The arguments were gathered from the outside in, so they come out
 		// in reverse.
 		var thunks [maxSpine]*Expression
 		for i := range k {
-			thunks[i] = x.thunkFor(args[k-1-i])
+			thunks[i] = x.thunkFor(w, args[k-1-i])
 		}
-		return applySpine(x, fn, thunks[:k])
+		return applySpine(w, x, fn, thunks[:k])
 
 	case p.OpNegateNode, p.OpNotNode, p.OpQuestionNode:
-		x.setValue(x.evalUnaryOp(nt))
+		x.setValue(x.evalUnaryOp(w, nt))
 
 	case p.OpAddNode, p.OpReduceNode, p.OpMultiplyNode, p.OpDivideNode,
 		p.OpGreaterNode, p.OpLessNode, p.OpGeqNode, p.OpLeqNode,
 		p.OpConcatNode, p.OpUpdateNode, p.OpAndNode, p.OpOrNode, p.OpImplNode,
 		p.OpEqNode, p.OpNeqNode:
-		x.setValue(x.evalBinaryOp(nt))
+		x.setValue(x.evalBinaryOp(w, nt))
 	}
 	return nil
 }
@@ -178,13 +178,13 @@ func (x *Expression) resolve() *Expression {
 // evalString evaluates a quoted or an indented string literal. One with no
 // interpolation in it is a literal like any other, and is kept against the
 // node rather than rebuilt on every evaluation.
-func (x *Expression) evalString() NixValue {
+func (x *Expression) evalString(w *worker) NixValue {
 	entry := x.scope().file.static.get(x.node().ID)
 	if !entry.val.IsNone() {
 		return entry.val
 	}
 	if x.node().Type == p.IStringNode {
-		return x.evalIndentedString(entry)
+		return x.evalIndentedString(w, entry)
 	}
 	// A quoted string is built as it is read: what a piece contributes does
 	// not depend on the pieces after it, so there is nothing to collect first.
@@ -195,13 +195,13 @@ func (x *Expression) evalString() NixValue {
 	for _, c := range x.node().Nodes {
 		switch c.Type {
 		default:
-			throwf(ErrEval, "unsupported string part: %v", c.Type)
+			w.throwf(ErrEval, "unsupported string part: %v", c.Type)
 		case p.TextNode:
 			b.WriteString(unescapeQuoted(x.parser().TokenString(c.Tokens[0])))
 		case p.InterpNode:
 			// Interpolations are evaluated in source order, as Nix does.
 			interpolated = true
-			part := CoerceToString(x.evalNodeAs(c.Nodes[0], blameInterp))
+			part := CoerceToString(w, x.evalNodeAs(w, c.Nodes[0], blameInterp))
 			b.WriteString(part.Content)
 			result.absorb(part)
 		}
@@ -232,19 +232,19 @@ func (x *Expression) stringSize() int {
 // evalIndentedString evaluates a `”…”` string, whose pieces have to be
 // collected before any of them can be written: how much indentation to strip
 // is decided by all of them together.
-func (x *Expression) evalIndentedString(entry *static) NixValue {
+func (x *Expression) evalIndentedString(w *worker, entry *static) NixValue {
 	interpolated := false
 	parts := make([]stringPart, 0, len(x.node().Nodes))
 	for _, c := range x.node().Nodes {
 		switch c.Type {
 		default:
-			throwf(ErrEval, "unsupported string part: %v", c.Type)
+			w.throwf(ErrEval, "unsupported string part: %v", c.Type)
 		case p.TextNode:
 			parts = append(parts, stringPart{text: x.parser().TokenString(c.Tokens[0])})
 		case p.InterpNode:
 			interpolated = true
-			part := x.evalNodeAs(c.Nodes[0], blameInterp)
-			parts = append(parts, stringPart{interp: CoerceToString(part)})
+			part := x.evalNodeAs(w, c.Nodes[0], blameInterp)
+			parts = append(parts, stringPart{interp: CoerceToString(w, part)})
 		}
 	}
 	parts = stripIndentation(parts)
@@ -268,7 +268,7 @@ func (x *Expression) evalIndentedString(entry *static) NixValue {
 }
 
 // evalBinds evaluates a set, a recursive set, or the bindings of a `let`.
-func (x *Expression) evalBinds(nt p.NodeType) {
+func (x *Expression) evalBinds(w *worker, nt p.NodeType) {
 	n := x.node()
 	bindNodes := n.Nodes
 	if nt == p.LetNode {
@@ -279,40 +279,40 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 	scope := x.scope()
 	if nt == p.RecSetNode || nt == p.LetNode {
 		// A recursive set and a `let` are in scope of their own bindings.
-		scope = scope.Subscope(set, false)
+		scope = scope.subscope(w, set, false)
 	}
 	for _, c := range bindNodes {
 		switch c.Type {
 		default:
-			throwf(ErrEval, "unsupported binding: %v", c.Type)
+			w.throwf(ErrEval, "unsupported binding: %v", c.Type)
 
 		case p.BindNode:
-			attrpath := scope.evalAttrPath(c.Nodes[0])
-			y := x.WithScoped(c.Nodes[1], scope)
-			set.Bind(attrpath, y.blamingAttr(attrpath[len(attrpath)-1]))
+			attrpath := scope.evalAttrPath(w, c.Nodes[0])
+			y := x.WithScoped(w, c.Nodes[1], scope)
+			set.Bind(w, attrpath, y.blamingAttr(attrpath[len(attrpath)-1]))
 
 		case p.InheritNode:
 			// `inherit a;` is `a = a;` evaluated in the enclosing scope.
 			for _, id := range c.Nodes[0].Nodes {
-				y := x.WithNode(id)
-				sym := x.scope().attrSym(id)
+				y := x.WithNode(w, id)
+				sym := x.scope().attrSym(w, id)
 				set.Bind1(sym, y.blamingAttr(sym))
 			}
 
 		case p.InheritFromNode:
 			// `inherit (e) a;` is `a = (e).a;`; e itself stays lazy, and is
 			// shared by every name inherited from it.
-			from := x.WithScoped(c.Nodes[0], scope)
+			from := x.WithScoped(w, c.Nodes[0], scope)
 			for _, id := range c.Nodes[1].Nodes {
-				sym := x.scope().attrSym(id)
-				set.Bind1(sym, from.selectAttr(sym).blamingAttr(sym))
+				sym := x.scope().attrSym(w, id)
+				set.Bind1(sym, from.selectAttr(w, sym).blamingAttr(sym))
 			}
 		}
 	}
 	// The names are put in order now that the group is complete, which is
 	// also when a name bound twice is caught. Nothing has read the set yet:
 	// the bindings are thunks, and the body below is only pointed at.
-	set.finishAll()
+	set.finishAll(w)
 	if nt == p.LetNode {
 		x.continueAt(n.Nodes[1], scope)
 	} else {
@@ -322,20 +322,20 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 
 // evalSelect evaluates `e.a.b` and `e.a.b or fallback`, returning the
 // expression the path selects.
-func (x *Expression) evalSelect(nt p.NodeType) *Expression {
+func (x *Expression) evalSelect(w *worker, nt p.NodeType) *Expression {
 	n := x.node()
-	attrpath := x.scope().evalAttrPath(n.Nodes[1])
+	attrpath := x.scope().evalAttrPath(w, n.Nodes[1])
 	var or *Expression
 	if nt == p.SelectOrNode {
-		or = x.WithNode(n.Nodes[2])
+		or = x.WithNode(w, n.Nodes[2])
 	}
 	// Only the leading expression is labelled: the attributes selected along
 	// the way are shared with the set that holds them, and already carry their
 	// own label.
-	expr := x.WithNode(n.Nodes[0]).blaming(blameSelect)
+	expr := x.WithNode(w, n.Nodes[0]).blaming(blameSelect)
 	for _, sym := range attrpath {
 		// As in Nix, `or` also covers selecting from a non-set.
-		val := expr.Eval()
+		val := expr.Eval(w)
 		if val.Kind() == KindSet {
 			if y, found := val.Set().Get(sym); found {
 				expr = y
@@ -347,9 +347,9 @@ func (x *Expression) evalSelect(nt p.NodeType) *Expression {
 			break
 		}
 		if val.Kind() != KindSet {
-			throwf(ErrType, "value is %s while a set was expected", anTypeName(val))
+			w.throwf(ErrType, "value is %s while a set was expected", anTypeName(w, val))
 		}
-		throwf(ErrMissingAttribute, "attribute '%s' missing", sym)
+		w.throwf(ErrMissingAttribute, "attribute '%s' missing", sym)
 	}
 	return expr
 }
@@ -361,14 +361,14 @@ func (x *Expression) evalSelect(nt p.NodeType) *Expression {
 // function written inside another one — every curried definition — is created
 // afresh on each call, and rebuilding the formal-argument map with it was one
 // of the largest sources of allocation in the evaluator.
-func (x *Expression) evalFunction() NixValue {
-	return LambdaValue(&NixExprLambda{lambdaInfo: x.scope().lambdaInfo(x.node()), Scope: x.scope()})
+func (x *Expression) evalFunction(w *worker) NixValue {
+	return LambdaValue(w, &NixExprLambda{lambdaInfo: x.scope().lambdaInfo(w, x.node()), Scope: x.scope()})
 }
 
 // lambdaInfo describes a function node: the names it binds and where its body
 // is. The grammar hands us the body last, preceded by an identifier
 // (`a: …` or `…@a: …`) and/or a formal argument set (`{ a, b ? 1, ... }: …`).
-func (scope *Scope) lambdaInfo(n *p.Node) *lambdaInfo {
+func (scope *Scope) lambdaInfo(w *worker, n *p.Node) *lambdaInfo {
 	e := scope.file.static.get(n.ID)
 	if e.lambda != nil {
 		return e.lambda
@@ -396,18 +396,18 @@ func (scope *Scope) lambdaInfo(n *p.Node) *lambdaInfo {
 					def = arg.Nodes[1]
 				}
 				if _, dup := fn.Formal[sym]; dup {
-					throwf(ErrEval, "duplicate formal function argument '%s'", sym)
+					w.throwf(ErrEval, "duplicate formal function argument '%s'", sym)
 				}
 				fn.Formal[sym] = def
 				fn.FormalOrder = append(fn.FormalOrder, sym)
 			}
 		default:
-			throwf(ErrEval, "unsupported function part: %v", c.Type)
+			w.throwf(ErrEval, "unsupported function part: %v", c.Type)
 		}
 	}
 	if fn.HasArg && fn.HasFormal {
 		if _, dup := fn.Formal[fn.Arg]; dup {
-			throwf(ErrEval, "duplicate formal function argument '%s'", fn.Arg)
+			w.throwf(ErrEval, "duplicate formal function argument '%s'", fn.Arg)
 		}
 	}
 	// Only a function the evaluator accepted is kept, so that one it rejects
@@ -418,13 +418,20 @@ func (scope *Scope) lambdaInfo(n *p.Node) *lambdaInfo {
 
 // selectAttr returns the attribute sym of the set this expression evaluates
 // to, without forcing it yet.
-func (x *Expression) selectAttr(sym Sym) *Expression {
-	return thunk(func() NixValue {
-		set := assertSet(x.Eval())
+func (x *Expression) selectAttr(w *worker, sym Sym) *Expression {
+	// The worker is the one that forces this, not the one that made it.
+	return thunk(w, func(w *worker) NixValue {
+		set := assertSet(w, x.Eval(w))
 		y, ok := set.Get(sym)
 		if !ok {
-			throwf(ErrMissingAttribute, "attribute '%s' missing", sym)
+			w.throwf(ErrMissingAttribute, "attribute '%s' missing", sym)
 		}
-		return y.Eval()
+		return y.Eval(w)
 	})
+}
+
+// Delay is an unevaluated expression for a parsed file in a scope, for a
+// caller outside the evaluator. See delay.
+func Delay(scope *Scope, pr *p.Parser) *Expression {
+	return delay(mainWorker, scope, pr)
 }

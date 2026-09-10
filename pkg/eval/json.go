@@ -6,7 +6,7 @@ import (
 )
 
 // ValueFromNative converts a value decoded from JSON into a Nix value.
-func ValueFromNative(x any) NixValue {
+func ValueFromNative(w *worker, x any) NixValue {
 	switch t := x.(type) {
 	case nil:
 		return Null
@@ -23,23 +23,23 @@ func ValueFromNative(x any) NixValue {
 	case []any:
 		result := make(NixList, len(t))
 		for i, val := range t {
-			result[i] = value(ValueFromNative(val))
+			result[i] = value(w, ValueFromNative(w, val))
 		}
 		return ListValue(result)
 	case map[string]any:
 		result := NewSet(len(t))
 		for key, val := range t {
-			result.Bind1(Intern(key), value(ValueFromNative(val)))
+			result.Bind1(Intern(key), value(w, ValueFromNative(w, val)))
 		}
 		return SetValue(result.keepFirst())
 	}
-	throwf(ErrType, "cannot convert a Go value of type %T to a Nix value", x)
+	w.throwf(ErrType, "cannot convert a Go value of type %T to a Nix value", x)
 	return NixValue{}
 }
 
 // ValueToNative converts a Nix value into a value the JSON encoder accepts,
 // forcing it completely.
-func ValueToNative(x NixValue) any {
+func ValueToNative(w *worker, x NixValue) any {
 	switch x.Kind() {
 	case KindNull:
 		return nil
@@ -57,7 +57,7 @@ func ValueToNative(x NixValue) any {
 		list := x.List()
 		result := make([]any, len(list))
 		for i, el := range list {
-			result[i] = ValueToNative(el.Eval())
+			result[i] = ValueToNative(w, el.Eval(w))
 		}
 		return result
 	case KindSet:
@@ -65,34 +65,34 @@ func ValueToNative(x NixValue) any {
 		// A set with a __toString or outPath attribute serialises as its
 		// string form, which is how derivations end up as store paths.
 		if t.Has(symToString) {
-			return t.coerceToString(false).Content
+			return t.coerceToString(w, false).Content
 		}
 		if t.Has(symOutPath) {
-			return t.coerceToString(false).Content
+			return t.coerceToString(w, false).Content
 		}
 		result := make(map[string]any, t.Len())
 		for _, a := range t.attrs {
-			result[a.sym.String()] = ValueToNative(a.x.Eval())
+			result[a.sym.String()] = ValueToNative(w, a.x.Eval(w))
 		}
 		return result
 	}
-	throwf(ErrType, "cannot convert %s to JSON", anTypeName(x))
+	w.throwf(ErrType, "cannot convert %s to JSON", anTypeName(w, x))
 	return nil
 }
 
-func bFromJSON(args ...*Expression) NixValue {
-	str := assertString(args[0].Eval())
+func bFromJSON(w *worker, args ...*Expression) NixValue {
+	str := assertString(w, args[0].Eval(w))
 	var parsed any
 	if err := json.Unmarshal([]byte(str.Content), &parsed); err != nil {
-		throwf(ErrEval, "cannot parse JSON: %s", err)
+		w.throwf(ErrEval, "cannot parse JSON: %s", err)
 	}
-	return ValueFromNative(parsed)
+	return ValueFromNative(w, parsed)
 }
 
-func bToJSON(args ...*Expression) NixValue {
-	b, err := json.Marshal(ValueToNative(args[0].Eval()))
+func bToJSON(w *worker, args ...*Expression) NixValue {
+	b, err := json.Marshal(ValueToNative(w, args[0].Eval(w)))
 	if err != nil {
-		throwf(ErrEval, "cannot serialise to JSON: %s", err)
+		w.throwf(ErrEval, "cannot serialise to JSON: %s", err)
 	}
 	return String(string(b))
 }

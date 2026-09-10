@@ -85,24 +85,24 @@ func newFile(pr *p.Parser) *file {
 
 // The value of each kind of literal, computed at most once per node.
 
-func uriLiteral(s string) NixValue { return String(s) }
+func uriLiteral(w *worker, s string) NixValue { return String(s) }
 
 // TODO: resolve relative to the file being evaluated, and <lookup> paths
 // through NIX_PATH.
-func pathLiteral(s string) NixValue { return PathValue(&NixPath{Root: "/", Path: s}) }
+func pathLiteral(w *worker, s string) NixValue { return PathValue(&NixPath{Root: "/", Path: s}) }
 
-func floatLiteral(s string) NixValue {
+func floatLiteral(w *worker, s string) NixValue {
 	val, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		throwf(ErrSyntax, "invalid float %q", s)
+		w.throwf(ErrSyntax, "invalid float %q", s)
 	}
 	return Float(val)
 }
 
-func intLiteral(s string) NixValue {
+func intLiteral(w *worker, s string) NixValue {
 	val, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		throwf(ErrSyntax, "invalid integer %q", s)
+		w.throwf(ErrSyntax, "invalid integer %q", s)
 	}
 	return Int(val)
 }
@@ -112,25 +112,25 @@ func intLiteral(s string) NixValue {
 // is no thunk to hold the value: an operand of an arithmetic expression is
 // usually a literal or a name, and going through the whole force machinery
 // for a number was a measurable cost on call-heavy workloads.
-func (scope *Scope) literalValue(n *p.Node) (NixValue, bool) {
+func (scope *Scope) literalValue(w *worker, n *p.Node) (NixValue, bool) {
 	switch n.Type {
 	case p.IntNode:
-		return scope.literal(n, intLiteral), true
+		return scope.literal(w, n, intLiteral), true
 	case p.FloatNode:
-		return scope.literal(n, floatLiteral), true
+		return scope.literal(w, n, floatLiteral), true
 	case p.PathNode:
-		return scope.literal(n, pathLiteral), true
+		return scope.literal(w, n, pathLiteral), true
 	case p.URINode:
-		return scope.literal(n, uriLiteral), true
+		return scope.literal(w, n, uriLiteral), true
 	}
 	return NixValue{}, false
 }
 
 // literal returns the value of a literal node, computing it at most once.
-func (scope *Scope) literal(n *p.Node, compute func(string) NixValue) NixValue {
+func (scope *Scope) literal(w *worker, n *p.Node, compute func(*worker, string) NixValue) NixValue {
 	e := scope.file.static.get(n.ID)
 	if e.val.IsNone() {
-		e.val = compute(scope.file.parser.TokenString(n.Tokens[0]))
+		e.val = compute(w, scope.file.parser.TokenString(n.Tokens[0]))
 	}
 	return e.val
 }
@@ -148,10 +148,10 @@ func (scope *Scope) name(n *p.Node) Sym {
 // literalExpr returns a literal node as an already evaluated expression. A
 // literal is the same value however often it is reached, so one expression
 // serves every use of the node, and passing one as an argument costs nothing.
-func (scope *Scope) literalExpr(n *p.Node) *Expression {
+func (scope *Scope) literalExpr(w *worker, n *p.Node) *Expression {
 	e := scope.file.static.get(n.ID)
 	if e.expr == nil {
-		e.expr = value(scope.evalNode(n))
+		e.expr = value(w, scope.evalNode(w, n))
 	}
 	return e.expr
 }

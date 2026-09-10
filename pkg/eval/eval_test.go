@@ -16,7 +16,7 @@ func evalPrint(t *testing.T, src string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return val.Print(testDepth), nil
+	return val.Print(mainWorker, testDepth), nil
 }
 
 func TestEval(t *testing.T) {

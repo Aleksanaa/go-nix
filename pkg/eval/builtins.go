@@ -11,7 +11,7 @@ import "unsafe"
 // underscored `__name`.
 type builtin struct {
 	arity  int
-	fn     func(...*Expression) NixValue
+	fn     func(*worker, ...*Expression) NixValue
 	doc    string
 	global bool
 }
@@ -103,29 +103,29 @@ var globals = map[string]NixValue{
 
 // DefaultScope is the scope every evaluation starts in: the globals, the
 // underscored builtins, and `builtins` itself.
-var DefaultScope = newDefaultScope()
+var DefaultScope = newDefaultScope(mainWorker)
 
-func newDefaultScope() *Scope {
+func newDefaultScope(w *worker) *Scope {
 	builtinsSet := NewSet(len(builtins) + len(globals) + 1)
 	mainSet := NewSet(2*len(builtins) + len(globals) + 1)
 
 	for name, b := range builtins {
 		sym := Intern(name)
 		op := &NixPrimop{Func: b.fn, ArgNum: b.arity, Doc: b.doc, Sym: sym}
-		val := LambdaValue(op)
-		builtinsSet.Bind1(sym, value(val))
+		val := LambdaValue(w, op)
+		builtinsSet.Bind1(sym, value(w, val))
 		if b.global {
-			mainSet.Bind1(sym, value(val))
+			mainSet.Bind1(sym, value(w, val))
 		}
-		mainSet.Bind1(Intern("__"+name), value(val))
+		mainSet.Bind1(Intern("__"+name), value(w, val))
 	}
 	for name, val := range globals {
 		sym := Intern(name)
-		builtinsSet.Bind1(sym, value(val))
-		mainSet.Bind1(sym, value(val))
+		builtinsSet.Bind1(sym, value(w, val))
+		mainSet.Bind1(sym, value(w, val))
 	}
 
-	builtinsSet.Bind1(symBuiltins, value(SetValue(builtinsSet)))
-	mainSet.Bind1(symBuiltins, value(SetValue(builtinsSet)))
-	return &Scope{bound: unsafe.Pointer(mainSet.finish())}
+	builtinsSet.Bind1(symBuiltins, value(w, SetValue(builtinsSet)))
+	mainSet.Bind1(symBuiltins, value(w, SetValue(builtinsSet)))
+	return &Scope{bound: unsafe.Pointer(mainSet.finish(w))}
 }

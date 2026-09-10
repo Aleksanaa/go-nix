@@ -22,7 +22,7 @@ type NixNumber interface{ int64 | float64 }
 
 // arith applies an arithmetic operator to two numbers of the same type, and
 // wraps the result as the value of that type.
-func arith[T NixNumber](a, b T, op p.NodeType, wrap func(T) NixValue) NixValue {
+func arith[T NixNumber](w *worker, a, b T, op p.NodeType, wrap func(T) NixValue) NixValue {
 	switch op {
 	case p.OpAddNode:
 		return wrap(a + b)
@@ -32,36 +32,36 @@ func arith[T NixNumber](a, b T, op p.NodeType, wrap func(T) NixValue) NixValue {
 		return wrap(a * b)
 	case p.OpDivideNode:
 		if b == 0 {
-			throwf(ErrEval, "division by zero")
+			w.throwf(ErrEval, "division by zero")
 		}
 		return wrap(a / b)
 	}
-	throwf(ErrEval, "unsupported arithmetic operator: %v", op)
+	w.throwf(ErrEval, "unsupported arithmetic operator: %v", op)
 	return NixValue{}
 }
 
 // Arith applies an arithmetic operator, promoting to float unless both
 // operands are integers.
-func Arith(a, b NixValue, op p.NodeType) NixValue {
+func Arith(w *worker, a, b NixValue, op p.NodeType) NixValue {
 	if a.kind == KindInt && b.kind == KindInt {
-		return arith(a.Int(), b.Int(), op, Int)
+		return arith(w, a.Int(), b.Int(), op, Int)
 	}
 	if !a.IsNumber() || !b.IsNumber() {
 		bad := a
 		if a.IsNumber() {
 			bad = b
 		}
-		throwf(ErrType, "value is %s while a number was expected", anTypeName(bad))
+		w.throwf(ErrType, "value is %s while a number was expected", anTypeName(w, bad))
 	}
-	return arith(a.toFloat(), b.toFloat(), op, Float)
+	return arith(w, a.toFloat(), b.toFloat(), op, Float)
 }
 
 // Add implements `+`, which concatenates strings and paths as well as adding
 // numbers.
-func Add(a, b NixValue) NixValue {
+func Add(w *worker, a, b NixValue) NixValue {
 	switch a.kind {
 	case KindString:
-		return StrValue(a.Str().Concat(assertString(b)))
+		return StrValue(a.Str().Concat(assertString(w, b)))
 	case KindPath:
 		// path + string and path + path both yield a path.
 		switch b.kind {
@@ -70,7 +70,7 @@ func Add(a, b NixValue) NixValue {
 		case KindPath:
 			return PathValue(a.Path().Join(b.Path().String()))
 		}
-		throwf(ErrType, "value is %s while a string was expected", anTypeName(b))
+		w.throwf(ErrType, "value is %s while a string was expected", anTypeName(w, b))
 	}
-	return Arith(a, b, p.OpAddNode)
+	return Arith(w, a, b, p.OpAddNode)
 }

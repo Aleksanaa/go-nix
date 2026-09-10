@@ -76,6 +76,13 @@ type Expression struct {
 	// rather than in every expression that mentions it.
 	blame   blameKind
 	forcing bool
+
+	// depth is where on the worker's stack the force of this expression
+	// began. Keeping it here rather than passing it to the deferred call that
+	// ends the force is what keeps that call to two words — the worker has to
+	// be one of them, and a third was worth 2-4% of a run. It fits in the
+	// padding the bytes above leave, so a thunk is no larger for it.
+	depth int32
 }
 
 // Val is the value this expression has been forced to, or no value at all.
@@ -134,22 +141,10 @@ func (x *Expression) setThunk(scope *Scope, n *p.Node) {
 // speed without the memory, so this is worth revisiting per use.
 const exprSlabSize = 256
 
-// exprSlab is the block currently being handed out. Evaluation is
-// single-goroutine, like the symbol table and the evaluation stack.
-var exprSlab []Expression
-
 // newExpr returns a zeroed expression. The block branch folds away when
 // blocks are disabled.
-func newExpr() *Expression {
-	if exprSlabSize <= 1 {
-		return new(Expression)
-	}
-	if len(exprSlab) == 0 {
-		exprSlab = make([]Expression, exprSlabSize)
-	}
-	x := &exprSlab[0]
-	exprSlab = exprSlab[1:]
-	return x
+func newExpr(w *worker) *Expression {
+	return w.newExpr()
 }
 
 // parser is the parser the expression's node belongs to. It is reached through
@@ -160,20 +155,20 @@ func (x *Expression) parser() *p.Parser {
 
 // WithNode derives an unevaluated expression for a sibling node, in the same
 // scope.
-func (x *Expression) WithNode(n *p.Node) *Expression {
-	y := newExpr()
+func (x *Expression) WithNode(w *worker, n *p.Node) *Expression {
+	y := w.newExpr()
 	y.setThunk(x.scope(), n)
 	return y
 }
 
 // WithScoped derives an unevaluated expression for a node in a new scope.
-func (x *Expression) WithScoped(n *p.Node, scope *Scope) *Expression {
-	return newScoped(scope, n)
+func (x *Expression) WithScoped(w *worker, n *p.Node, scope *Scope) *Expression {
+	return newScoped(w, scope, n)
 }
 
 // newScoped is an unevaluated expression for a node in a scope.
-func newScoped(scope *Scope, n *p.Node) *Expression {
-	y := newExpr()
+func newScoped(w *worker, scope *Scope, n *p.Node) *Expression {
+	y := w.newExpr()
 	y.setThunk(scope, n)
 	return y
 }
@@ -262,11 +257,11 @@ func (f evalFrame) traceFrame() Frame {
 }
 
 // Eval forces the expression to a value, memoizing the result.
-func (x *Expression) Eval() NixValue {
+func (x *Expression) Eval(w *worker) NixValue {
 	if x.kind != KindNone {
 		return x.Val()
 	}
-	return x.force()
+	return x.force(w)
 }
 
 // maxCallDepth bounds how deeply expressions may nest at run time, so that a
@@ -285,30 +280,16 @@ type evalFrame struct {
 	blame  blameKind
 }
 
-// evalStack holds the expressions currently being forced, innermost last. It
-// is what an error is annotated from: throwf reads the position and the
-// backtrace off it at the point of failure, so that unwinding stays a single
-// panic rather than one re-panic per frame.
-//
-// It is a fixed array indexed by evalDepth rather than a slice appended to.
-// Every force pushes a frame, the depth is bounded by maxCallDepth anyway, and
-// an indexed store leaves the growth check and the slice header out of the
-// hottest function in the evaluator. Evaluation is single-goroutine, so one
-// array serves it.
-var (
-	evalStack [maxCallDepth]evalFrame
-	evalDepth int
-)
-
-func (x *Expression) force() NixValue {
+func (x *Expression) force(w *worker) NixValue {
 	if x.forcing {
 		// The thunk is already being evaluated further up the stack, so its
 		// value is defined in terms of itself.
-		throwf(ErrInfiniteRecursion, "infinite recursion encountered")
+		w.throwf(ErrInfiniteRecursion, "infinite recursion encountered")
 	}
 	x.forcing = true
-	depth := evalDepth
-	defer x.finish(depth)
+	depth := w.depth
+	x.depth = int32(depth)
+	defer x.finish(w)
 
 	// An expression that only stands in front of another one — a parenthesis,
 	// the branch an `if` took, the body of a `let` or of a call — is continued
@@ -317,8 +298,8 @@ func (x *Expression) force() NixValue {
 	// one allocation and one nested force fewer per level, and the backtrace
 	// is unchanged because each turn still records a frame.
 	for {
-		if evalDepth == maxCallDepth {
-			throwf(ErrEval, "stack overflow; possible infinite recursion")
+		if w.depth == maxCallDepth {
+			w.throwf(ErrEval, "stack overflow; possible infinite recursion")
 		}
 		// The frame is built inline rather than through the scope, node and
 		// native accessors: this is the hottest loop in the evaluator, and
@@ -329,19 +310,19 @@ func (x *Expression) force() NixValue {
 		var lower *Expression
 		if x.b != nil {
 			frame.scope, frame.node = (*Scope)(x.a), (*p.Node)(x.b)
-			evalStack[evalDepth] = frame
-			evalDepth++
-			lower = x.resolve()
+			w.stack[w.depth] = frame
+			w.depth++
+			lower = x.resolve(w)
 		} else if x.a != nil {
 			call := (*nativeCall)(x.a)
 			frame.native = call
-			evalStack[evalDepth] = frame
-			evalDepth++
-			x.setValue(call.run())
+			w.stack[w.depth] = frame
+			w.depth++
+			x.setValue(call.run(w))
 		} else {
-			evalStack[evalDepth] = frame
-			evalDepth++
-			throwf(ErrEval, "expression has nothing to evaluate")
+			w.stack[w.depth] = frame
+			w.depth++
+			w.throwf(ErrEval, "expression has nothing to evaluate")
 		}
 		if x.kind != KindNone {
 			break
@@ -352,7 +333,7 @@ func (x *Expression) force() NixValue {
 			// continuing in place) keeps every thunk on the stack, so that a
 			// cycle through several bindings is detected and each contributes
 			// a trace frame.
-			x.setValue(lower.Eval())
+			x.setValue(lower.Eval(w))
 			break
 		}
 	}
@@ -380,21 +361,26 @@ func (x *Expression) continueIn(n *p.Node, scope *Scope, kind blameKind) {
 
 // finish leaves the expression, whether it produced a value or is being
 // unwound past by a failure, dropping every frame it pushed.
-func (x *Expression) finish(depth int) {
+//
+// The expression is the deferred call's receiver rather than something the
+// worker holds: a pointer to it reachable from the heap would make every
+// operand escape, and operands staying on the Go stack is what lets an
+// arithmetic-heavy expression allocate nothing per operand.
+func (x *Expression) finish(w *worker) {
 	x.forcing = false
-	evalDepth = depth
+	w.depth = int(x.depth)
 }
 
 // value wraps an already known value as an evaluated expression.
-func value(v NixValue) *Expression {
-	x := newExpr()
+func value(w *worker, v NixValue) *Expression {
+	x := w.newExpr()
 	x.setValue(v)
 	return x
 }
 
 // thunk wraps a Go computation as an unevaluated expression.
-func thunk(f func() NixValue) *Expression {
-	x := newExpr()
+func thunk(w *worker, f func(*worker) NixValue) *Expression {
+	x := w.newExpr()
 	x.a = unsafe.Pointer(&nativeCall{fn: f})
 	return x
 }
@@ -406,17 +392,17 @@ func thunk(f func() NixValue) *Expression {
 type nativeCall struct {
 	op   *NixPrimop
 	args [maxPrimopArgs]*Expression
-	fn   func() NixValue
+	fn   func(w *worker) NixValue
 	// sym is what a backtrace calls this: the builtin's name, or the
 	// attribute the computation stands for.
 	sym Sym
 }
 
-func (c *nativeCall) run() NixValue {
+func (c *nativeCall) run(w *worker) NixValue {
 	if c.op != nil {
-		return c.op.Func(c.args[:c.op.ArgNum]...)
+		return c.op.Func(w, c.args[:c.op.ArgNum]...)
 	}
-	return c.fn()
+	return c.fn(w)
 }
 
 // evalNode evaluates a child node in this expression's scope.
@@ -428,14 +414,14 @@ func (c *nativeCall) run() NixValue {
 // arithmetic-heavy expression allocate nothing per operand. Where a value does
 // escape, the compiler falls back to allocating it, so this stays correct
 // wherever it is used.
-func (x *Expression) evalNode(n *p.Node) NixValue { return x.scope().evalNode(n) }
+func (x *Expression) evalNode(w *worker, n *p.Node) NixValue { return x.scope().evalNode(w, n) }
 
 // evalNodeAs is evalNode for an operand that a backtrace should name.
-func (x *Expression) evalNodeAs(n *p.Node, kind blameKind) NixValue {
+func (x *Expression) evalNodeAs(w *worker, n *p.Node, kind blameKind) NixValue {
 	var y Expression
 	y.setThunk(x.scope(), n)
 	y.blame = kind
-	return y.Eval()
+	return y.Eval(w)
 }
 
 // thunkFor is the expression to pass where something else will hold on to the
@@ -449,7 +435,7 @@ func (x *Expression) evalNodeAs(n *p.Node, kind blameKind) NixValue {
 //
 // What comes back may be shared, so nothing may relabel it for a backtrace:
 // whoever holds it already describes it.
-func (x *Expression) thunkFor(n *p.Node) *Expression {
+func (x *Expression) thunkFor(w *worker, n *p.Node) *Expression {
 	switch n.Type {
 	case p.IDNode:
 		// A name the chain does not hold may still come from a `with`, whose
@@ -458,7 +444,7 @@ func (x *Expression) thunkFor(n *p.Node) *Expression {
 			return y
 		}
 	case p.IntNode, p.FloatNode, p.PathNode, p.URINode:
-		return x.scope().literalExpr(n)
+		return x.scope().literalExpr(w, n)
 	}
-	return x.WithNode(n)
+	return x.WithNode(w, n)
 }

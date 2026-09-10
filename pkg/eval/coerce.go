@@ -7,27 +7,27 @@ import (
 // CoerceToString converts a value to a string the way interpolation and
 // attribute names do: only strings, paths and sets with an outPath or a
 // __toString attribute are accepted.
-func CoerceToString(val NixValue) *NixString {
-	return coerceToString(val, false)
+func CoerceToString(w *worker, val NixValue) *NixString {
+	return coerceToString(w, val, false)
 }
 
 // ToString converts a value to a string the way builtins.toString does, which
 // additionally accepts numbers, Booleans, null and lists.
-func ToString(val NixValue) *NixString {
-	return coerceToString(val, true)
+func ToString(w *worker, val NixValue) *NixString {
+	return coerceToString(w, val, true)
 }
 
-func coerceToString(val NixValue, more bool) *NixString {
+func coerceToString(w *worker, val NixValue, more bool) *NixString {
 	switch val.Kind() {
 	case KindString:
 		return val.Str()
 	case KindPath:
 		return newString(val.Path().String())
 	case KindSet:
-		return val.Set().coerceToString(more)
+		return val.Set().coerceToString(w, more)
 	}
 	if !more {
-		throwf(ErrType, "cannot coerce %s to a string", anTypeName(val))
+		w.throwf(ErrType, "cannot coerce %s to a string", anTypeName(w, val))
 	}
 	switch val.Kind() {
 	case KindInt:
@@ -43,36 +43,36 @@ func coerceToString(val NixValue, more bool) *NixString {
 	case KindNull:
 		return newString("")
 	case KindList:
-		return coerceListToString(val.List(), more)
+		return coerceListToString(w, val.List(), more)
 	}
-	throwf(ErrType, "cannot coerce %s to a string", anTypeName(val))
+	w.throwf(ErrType, "cannot coerce %s to a string", anTypeName(w, val))
 	return nil
 }
 
 // coerceToString on a set uses __toString if present, else outPath, which is
 // what makes a derivation usable inside a string.
-func (s *AttrSet) coerceToString(more bool) *NixString {
+func (s *AttrSet) coerceToString(w *worker, more bool) *NixString {
 	if x, ok := s.Get(symToString); ok {
-		val := x.Eval()
+		val := x.Eval(w)
 		if !val.IsLambda() {
-			throwf(ErrType, "value of the __toString attribute is %s while a function was expected",
-				anTypeName(val))
+			w.throwf(ErrType, "value of the __toString attribute is %s while a function was expected",
+				anTypeName(w, val))
 		}
-		return coerceToString(applyToValue(val.Lambda(), SetValue(s)).Eval(), more)
+		return coerceToString(w, applyToValue(w, val.Lambda(), SetValue(s)).Eval(w), more)
 	}
 	if x, ok := s.Get(symOutPath); ok {
-		return coerceToString(x.Eval(), more)
+		return coerceToString(w, x.Eval(w), more)
 	}
-	throwf(ErrType, "cannot coerce a set to a string: it has neither a __toString nor an outPath attribute")
+	w.throwf(ErrType, "cannot coerce a set to a string: it has neither a __toString nor an outPath attribute")
 	return nil
 }
 
 // coerceListToString joins the coerced elements with spaces.
-func coerceListToString(l NixList, more bool) *NixString {
+func coerceListToString(w *worker, l NixList, more bool) *NixString {
 	result := &NixString{}
 	parts := make([]string, len(l))
 	for i, x := range l {
-		str := coerceToString(x.Eval(), more)
+		str := coerceToString(w, x.Eval(w), more)
 		parts[i] = str.Content
 		result.absorb(str)
 	}

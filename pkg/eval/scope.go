@@ -56,33 +56,16 @@ func (s *Scope) single() *Expression {
 // but a cheaper one, since a scope chain dies together.
 const scopeSlabSize = 256
 
-// scopeSlab is the block currently being handed out. Evaluation is
-// single-goroutine, like the symbol table and the evaluation stack.
-var scopeSlab []Scope
-
-// newScope returns a zeroed scope from the block being handed out.
-func newScope() *Scope {
-	if scopeSlabSize <= 1 {
-		return new(Scope)
-	}
-	if len(scopeSlab) == 0 {
-		scopeSlab = make([]Scope, scopeSlabSize)
-	}
-	s := &scopeSlab[0]
-	scopeSlab = scopeSlab[1:]
-	return s
-}
-
 // Subscope nests a scope binding a set of names.
-func (scope *Scope) Subscope(binds NixSet, lowPrio bool) *Scope {
-	s := newScope()
+func (scope *Scope) subscope(w *worker, binds NixSet, lowPrio bool) *Scope {
+	s := w.newScope()
 	*s = Scope{bound: unsafe.Pointer(binds), LowPrio: lowPrio, Parent: scope, file: scope.file}
 	return s
 }
 
 // Subscope1 nests a scope binding a single name.
-func (scope *Scope) Subscope1(sym Sym, x *Expression) *Scope {
-	s := newScope()
+func (scope *Scope) Subscope1(w *worker, sym Sym, x *Expression) *Scope {
+	s := w.newScope()
 	*s = Scope{sym: sym, bound: unsafe.Pointer(x), Parent: scope, file: scope.file}
 	return s
 }
@@ -206,7 +189,7 @@ func (scope *Scope) lookupNode(n *p.Node) (Sym, *Expression, bool) {
 
 // evalNode evaluates a node in this scope, with no surrounding expression to
 // take the scope from.
-func (scope *Scope) evalNode(n *p.Node) NixValue {
+func (scope *Scope) evalNode(w *worker, n *p.Node) NixValue {
 	// Reading a name is the value of the thunk it is bound to. An expression
 	// of its own would mean forcing twice — once for the read, once for the
 	// binding — and a backtrace frame that says nothing the binding's own
@@ -214,18 +197,18 @@ func (scope *Scope) evalNode(n *p.Node) NixValue {
 	if n.Type == p.IDNode {
 		sym, x, ok := scope.lookupNode(n)
 		if !ok {
-			throwAt(scope, n, ErrUndefinedVariable, "undefined variable '%s'", sym)
+			w.throwAt(scope, n, ErrUndefinedVariable, "undefined variable '%s'", sym)
 		}
-		return x.Eval()
+		return x.Eval(w)
 	}
 	// A literal is already a value: it needs no thunk, no evaluation frame
 	// and no forcing, only the number read out of the node's cache.
-	if val, ok := scope.literalValue(n); ok {
+	if val, ok := scope.literalValue(w, n); ok {
 		return val
 	}
 	var y Expression
 	y.setThunk(scope, n)
-	return y.Eval()
+	return y.Eval(w)
 }
 
 // evalAttrPath evaluates the names of an attribute path, such as the
@@ -238,7 +221,7 @@ func (scope *Scope) evalNode(n *p.Node) NixValue {
 // its components again each time was the largest single cost in the evaluator
 // after allocation. A path with an interpolation in it has to be evaluated
 // every time, and is not kept.
-func (scope *Scope) evalAttrPath(path *p.Node) []Sym {
+func (scope *Scope) evalAttrPath(w *worker, path *p.Node) []Sym {
 	e := scope.file.static.get(path.ID)
 	if e.attrs != nil {
 		return e.attrs
@@ -246,7 +229,7 @@ func (scope *Scope) evalAttrPath(path *p.Node) []Sym {
 	attrs := make([]Sym, len(path.Nodes))
 	static := true
 	for i, c := range path.Nodes {
-		attrs[i] = scope.attrSym(c)
+		attrs[i] = scope.attrSym(w, c)
 		static = static && c.Type == p.IDNode
 	}
 	if static {
@@ -258,16 +241,16 @@ func (scope *Scope) evalAttrPath(path *p.Node) []Sym {
 // attrSym evaluates one component of an attribute path to its interned name.
 // A plain identifier is interned once and kept against the node; a computed
 // one has to be evaluated every time.
-func (scope *Scope) attrSym(n *p.Node) Sym {
+func (scope *Scope) attrSym(w *worker, n *p.Node) Sym {
 	switch n.Type {
 	case p.IDNode:
 		return scope.name(n)
 	case p.StringNode, p.IStringNode:
-		return CoerceToString(scope.evalNode(n)).intern()
+		return CoerceToString(w, scope.evalNode(w, n)).intern()
 	case p.InterpNode:
-		return CoerceToString(scope.evalNode(n.Nodes[0])).intern()
+		return CoerceToString(w, scope.evalNode(w, n.Nodes[0])).intern()
 	default:
-		throwf(ErrEval, "unsupported attribute name: %v", n.Type)
+		w.throwf(ErrEval, "unsupported attribute name: %v", n.Type)
 		return 0
 	}
 }
@@ -296,4 +279,12 @@ func (scope *Scope) Names() []string {
 		}
 	}
 	return names
+}
+
+// Subscope nests a scope binding a set of names, for a caller outside the
+// evaluator — the REPL, binding what a session has named so far. Evaluation
+// inside the package carries the worker it is running on; out here there is
+// only the one.
+func (scope *Scope) Subscope(binds NixSet, lowPrio bool) *Scope {
+	return scope.subscope(mainWorker, binds, lowPrio)
 }

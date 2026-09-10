@@ -97,7 +97,7 @@ func ListValue(l NixList) NixValue {
 }
 
 // LambdaValue makes a value of anything that can be applied.
-func LambdaValue(f NixLambda) NixValue {
+func LambdaValue(w *worker, f NixLambda) NixValue {
 	switch fn := f.(type) {
 	case *NixExprLambda:
 		return NixValue{kind: KindLambda, ptr: unsafe.Pointer(fn)}
@@ -106,7 +106,7 @@ func LambdaValue(f NixLambda) NixValue {
 	case *NixPartialPrimop:
 		return NixValue{kind: KindPartial, ptr: unsafe.Pointer(fn)}
 	}
-	throwf(ErrEval, "unsupported function value")
+	w.throwf(ErrEval, "unsupported function value")
 	return NixValue{}
 }
 
@@ -159,7 +159,7 @@ func (v NixValue) IsNumber() bool { return v.kind == KindInt || v.kind == KindFl
 
 // Print renders the value, expanding nested lists and sets while recurse is
 // positive and abbreviating them as "[ ... ]" or "{ ... }" beyond that.
-func (v NixValue) Print(recurse int) string {
+func (v NixValue) Print(w *worker, recurse int) string {
 	switch v.kind {
 	case KindNone:
 		return "«unevaluated»"
@@ -179,9 +179,9 @@ func (v NixValue) Print(recurse int) string {
 	case KindPath:
 		return v.Path().String()
 	case KindList:
-		return v.List().Print(recurse)
+		return v.List().Print(w, recurse)
 	case KindSet:
-		return v.Set().Print(recurse)
+		return v.Set().Print(w, recurse)
 	case KindLambda:
 		return "«lambda»"
 	case KindPrimop, KindPartial:
@@ -192,7 +192,7 @@ func (v NixValue) Print(recurse int) string {
 
 // Compare implements Nix equality: structural for data, always false for
 // functions.
-func (v NixValue) Compare(other NixValue) bool {
+func (v NixValue) Compare(w *worker, other NixValue) bool {
 	switch v.kind {
 	case KindNull:
 		return other.kind == KindNull
@@ -219,9 +219,9 @@ func (v NixValue) Compare(other NixValue) bool {
 	case KindPath:
 		return other.kind == KindPath && v.Path().String() == other.Path().String()
 	case KindList:
-		return other.kind == KindList && v.List().Compare(other.List())
+		return other.kind == KindList && v.List().Compare(w, other.List())
 	case KindSet:
-		return other.kind == KindSet && v.Set().Compare(other.Set())
+		return other.kind == KindSet && v.Set().Compare(w, other.Set())
 	}
 	// Functions never compare equal, nor does an absent value.
 	return false
@@ -256,7 +256,7 @@ func TypeName(val NixValue) string {
 
 // anTypeName names a value the way error messages spell it, as in
 // "value is a list while a set was expected".
-func anTypeName(val NixValue) string {
+func anTypeName(w *worker, val NixValue) string {
 	switch val.kind {
 	case KindInt:
 		return "an integer"
@@ -284,22 +284,30 @@ func anTypeName(val NixValue) string {
 
 // assertKind returns val when it is of the kind expected, and reports a Nix
 // type error when it is not.
-func assertKind(val NixValue, kind Kind, expected string) NixValue {
+func assertKind(w *worker, val NixValue, kind Kind, expected string) NixValue {
 	if val.kind != kind {
-		throwf(ErrType, "value is %s while %s was expected", anTypeName(val), expected)
+		w.throwf(ErrType, "value is %s while %s was expected", anTypeName(w, val), expected)
 	}
 	return val
 }
 
-func assertBool(val NixValue) bool         { return assertKind(val, KindBool, "a Boolean").Bool() }
-func assertInt(val NixValue) int64         { return assertKind(val, KindInt, "an integer").Int() }
-func assertList(val NixValue) NixList      { return assertKind(val, KindList, "a list").List() }
-func assertSet(val NixValue) NixSet        { return assertKind(val, KindSet, "a set").Set() }
-func assertString(val NixValue) *NixString { return assertKind(val, KindString, "a string").Str() }
+func assertBool(w *worker, val NixValue) bool {
+	return assertKind(w, val, KindBool, "a Boolean").Bool()
+}
+func assertInt(w *worker, val NixValue) int64 {
+	return assertKind(w, val, KindInt, "an integer").Int()
+}
+func assertList(w *worker, val NixValue) NixList {
+	return assertKind(w, val, KindList, "a list").List()
+}
+func assertSet(w *worker, val NixValue) NixSet { return assertKind(w, val, KindSet, "a set").Set() }
+func assertString(w *worker, val NixValue) *NixString {
+	return assertKind(w, val, KindString, "a string").Str()
+}
 
-func assertLambda(val NixValue) NixLambda {
+func assertLambda(w *worker, val NixValue) NixLambda {
 	if !val.IsLambda() {
-		throwf(ErrType, "value is %s while a function was expected", anTypeName(val))
+		w.throwf(ErrType, "value is %s while a function was expected", anTypeName(w, val))
 	}
 	return val.Lambda()
 }
@@ -308,7 +316,7 @@ func assertLambda(val NixValue) NixLambda {
 // numerically, strings and paths lexicographically, and lists element by
 // element. It reports -1, 0 or 1, and raises a type error for values Nix
 // refuses to order.
-func CompareOrder(a, b NixValue) int {
+func CompareOrder(w *worker, a, b NixValue) int {
 	switch {
 	case a.IsNumber() && b.IsNumber():
 		x, y := a.toFloat(), b.toFloat()
@@ -331,13 +339,13 @@ func CompareOrder(a, b NixValue) int {
 		// sorts before the longer list.
 		lhs, rhs := a.List(), b.List()
 		for i := 0; i < len(lhs) && i < len(rhs); i++ {
-			if c := CompareOrder(lhs[i].Eval(), rhs[i].Eval()); c != 0 {
+			if c := CompareOrder(w, lhs[i].Eval(w), rhs[i].Eval(w)); c != 0 {
 				return c
 			}
 		}
 		return sign(len(lhs) - len(rhs))
 	}
-	throwf(ErrType, "cannot compare %s with %s", anTypeName(a), anTypeName(b))
+	w.throwf(ErrType, "cannot compare %s with %s", anTypeName(w, a), anTypeName(w, b))
 	return 0
 }
 

@@ -142,7 +142,7 @@ func (s *AttrSet) Keys() []Sym {
 	return keys
 }
 
-func (s *AttrSet) Print(recurse int) string {
+func (s *AttrSet) Print(w *worker, recurse int) string {
 	if recurse == 0 {
 		return "{ ... }"
 	}
@@ -150,7 +150,7 @@ func (s *AttrSet) Print(recurse int) string {
 	parts = append(parts, "{")
 	for _, key := range s.Keys() {
 		x, _ := s.Get(key)
-		parts = append(parts, fmt.Sprintf("%s = %s;", key, x.Eval().Print(recurse-1)))
+		parts = append(parts, fmt.Sprintf("%s = %s;", key, x.Eval(w).Print(w, recurse-1)))
 	}
 	return strings.Join(append(parts, "}"), " ")
 }
@@ -165,13 +165,13 @@ func (s *AttrSet) Bind1(sym Sym, x *Expression) {
 
 // Bind adds an attribute under a path, creating the intermediate sets that
 // `a.b.c = v;` implies.
-func (s *AttrSet) Bind(syms []Sym, x *Expression) {
+func (s *AttrSet) Bind(w *worker, syms []Sym, x *Expression) {
 	last := len(syms) - 1
 	for i, sym := range syms[:last] {
 		y, ok := s.Get(sym)
 		if !ok {
 			sub := NewSet(1)
-			s.Bind1(sym, value(SetValue(sub)))
+			s.Bind1(sym, value(w, SetValue(sub)))
 			s = sub
 			continue
 		}
@@ -179,7 +179,7 @@ func (s *AttrSet) Bind(syms []Sym, x *Expression) {
 		// into an attribute that is already a value would not be lazy.
 		val := y.Val()
 		if val.Kind() != KindSet {
-			throwf(ErrEval, "attribute '%s' already defined", strings.Join(symNames(syms[:i+1]), "."))
+			w.throwf(ErrEval, "attribute '%s' already defined", strings.Join(symNames(syms[:i+1]), "."))
 		}
 		s = val.Set()
 	}
@@ -188,18 +188,18 @@ func (s *AttrSet) Bind(syms []Sym, x *Expression) {
 
 // finishAll puts this set and the ones nested inside it in order, which is
 // what a binding group does once it is complete.
-func (s *AttrSet) finishAll() {
+func (s *AttrSet) finishAll(w *worker) {
 	for _, a := range s.attrs {
 		if val := a.x.Val(); val.Kind() == KindSet && !val.Set().sorted {
-			val.Set().finishAll()
+			val.Set().finishAll(w)
 		}
 	}
-	s.finish()
+	s.finish(w)
 }
 
 // finish puts a set that was built by appending in order, and reports a name
 // bound twice. Every set reaches this before anything reads it.
-func (s *AttrSet) finish() NixSet {
+func (s *AttrSet) finish(w *worker) NixSet {
 	if s.sorted {
 		return s
 	}
@@ -208,7 +208,7 @@ func (s *AttrSet) finish() NixSet {
 	slices.SortStableFunc(s.attrs, func(a, b attr) int { return cmpSym(a, b.sym) })
 	for i := 1; i < len(s.attrs); i++ {
 		if s.attrs[i].sym == s.attrs[i-1].sym {
-			throwf(ErrEval, "attribute '%s' already defined", s.attrs[i].sym)
+			w.throwf(ErrEval, "attribute '%s' already defined", s.attrs[i].sym)
 		}
 	}
 	s.sorted = true
@@ -246,13 +246,13 @@ func (s *AttrSet) Update(other NixSet) NixSet {
 	return setOf(merged)
 }
 
-func (s *AttrSet) Compare(other NixSet) bool {
+func (s *AttrSet) Compare(w *worker, other NixSet) bool {
 	if len(s.attrs) != len(other.attrs) {
 		return false
 	}
 	for i, a := range s.attrs {
 		b := other.attrs[i]
-		if a.sym != b.sym || !a.x.Eval().Compare(b.x.Eval()) {
+		if a.sym != b.sym || !a.x.Eval(w).Compare(w, b.x.Eval(w)) {
 			return false
 		}
 	}
@@ -290,9 +290,9 @@ func (s *AttrSet) Set(sym Sym, x *Expression) {
 
 // pair is a set of two known attributes, which is the shape of the answer a
 // handful of builtins give.
-func pair(sym1 Sym, val1 NixValue, sym2 Sym, val2 NixValue) NixValue {
+func pair(w *worker, sym1 Sym, val1 NixValue, sym2 Sym, val2 NixValue) NixValue {
 	s := NewSet(2)
-	s.Bind1(sym1, value(val1))
-	s.Bind1(sym2, value(val2))
-	return SetValue(s.finish())
+	s.Bind1(sym1, value(w, val1))
+	s.Bind1(sym2, value(w, val2))
+	return SetValue(s.finish(w))
 }

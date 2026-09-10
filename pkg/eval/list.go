@@ -5,14 +5,14 @@ import "strings"
 // NixList is a list of lazily evaluated elements.
 type NixList []*Expression
 
-func (l NixList) Print(recurse int) string {
+func (l NixList) Print(w *worker, recurse int) string {
 	if recurse == 0 {
 		return "[ ... ]"
 	}
 	parts := make([]string, 0, len(l)+2)
 	parts = append(parts, "[")
 	for _, x := range l {
-		parts = append(parts, x.Eval().Print(recurse-1))
+		parts = append(parts, x.Eval(w).Print(w, recurse-1))
 	}
 	return strings.Join(append(parts, "]"), " ")
 }
@@ -26,12 +26,12 @@ func (l NixList) Concat(other NixList) NixList {
 	return append(result, other...)
 }
 
-func (l NixList) Compare(other NixList) bool {
+func (l NixList) Compare(w *worker, other NixList) bool {
 	if len(l) != len(other) {
 		return false
 	}
 	for i, x := range l {
-		if !x.Eval().Compare(other[i].Eval()) {
+		if !x.Eval(w).Compare(w, other[i].Eval(w)) {
 			return false
 		}
 	}
