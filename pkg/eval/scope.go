@@ -87,22 +87,16 @@ func (scope *Scope) parser() *p.Parser {
 	return scope.file.parser
 }
 
-// Lookup finds sym, searching lexical bindings first and `with` bindings only
-// afterwards.
+// lookupFrom finds sym, searching lexical bindings first and `with` bindings
+// only afterwards. It also reports where a lexical binding was found — how many
+// scopes had to be skipped, and which slot of that scope holds it. A `with`
+// reports neither: what its set holds is not decided until it is evaluated,
+// and a nearer `with` shadows a farther one, so there is nothing about it
+// worth remembering.
 //
 // One walk answers both: a lexical binding anywhere in the chain beats every
 // `with`, so the nearest `with` match is remembered and only used once the
 // walk has finished without finding a lexical one.
-func (scope *Scope) Lookup(sym Sym) (*Expression, bool) {
-	x, _, _, ok := scope.lookupFrom(sym)
-	return x, ok
-}
-
-// lookupFrom is Lookup, also reporting where a lexical binding was found: how
-// many scopes had to be skipped, and which slot of that scope holds it. A
-// `with` reports neither: what its set holds is not decided until it is
-// evaluated, and a nearer `with` shadows a farther one, so there is nothing
-// about it worth remembering.
 func (scope *Scope) lookupFrom(sym Sym) (x *Expression, hops, slot int32, ok bool) {
 	var with *Expression
 	for s := scope; s != nil; s, hops = s.Parent, hops+1 {

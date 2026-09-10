@@ -27,8 +27,6 @@ type lambdaInfo struct {
 	HasEllipsis bool
 
 	Body *p.Node
-	// Node is the function expression itself, which backtraces point at.
-	Node *p.Node
 
 	// next is the function this one's body is, for a curried definition like
 	// `a: b: …`. Walking that chain is how a call binds several arguments at
@@ -72,7 +70,7 @@ func (f *NixExprLambda) bindFormals(w *worker, binds NixSet, scope *Scope, arg *
 	val := arg.Eval(w)
 	if val.Kind() != KindSet {
 		w.throwf(ErrType, "value is %s while a set was expected, as the function takes formal arguments",
-			anTypeName(w, val))
+			anTypeName(val))
 	}
 	args := val.Set()
 	for _, sym := range f.FormalOrder {

@@ -180,7 +180,7 @@ func (pr *preparer) binds(bindNodes []*p.Node) {
 // backtrace, exactly as before.
 func (pr *preparer) lambda(n *p.Node) {
 	e := pr.entry(n)
-	fn := &lambdaInfo{Node: n, Body: n.Nodes[len(n.Nodes)-1]}
+	fn := &lambdaInfo{Body: n.Nodes[len(n.Nodes)-1]}
 	pr.entry(fn.Body).owner = n
 	for _, c := range n.Nodes[:len(n.Nodes)-1] {
 		switch c.Type {

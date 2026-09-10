@@ -128,14 +128,8 @@ func intLiteral(w *worker, s string) NixValue {
 // for a number was a measurable cost on call-heavy workloads.
 func (scope *Scope) literalValue(w *worker, n *p.Node) (NixValue, bool) {
 	switch n.Type {
-	case p.IntNode:
-		return scope.literal(w, n, intLiteral), true
-	case p.FloatNode:
-		return scope.literal(w, n, floatLiteral), true
-	case p.PathNode:
-		return scope.literal(w, n, pathLiteral), true
-	case p.URINode:
-		return scope.literal(w, n, uriLiteral), true
+	case p.IntNode, p.FloatNode, p.PathNode, p.URINode:
+		return scope.literal(w, n), true
 	}
 	return NixValue{}, false
 }
@@ -144,7 +138,7 @@ func (scope *Scope) literalValue(w *worker, n *p.Node) (NixValue, bool) {
 // before the evaluation started. A literal the pass could not take — a number
 // out of range — is raised here, where the evaluation has a backtrace to
 // attach, rather than when the file was loaded.
-func (scope *Scope) literal(w *worker, n *p.Node, compute func(*worker, string) NixValue) NixValue {
+func (scope *Scope) literal(w *worker, n *p.Node) NixValue {
 	e := scope.file.static.get(n.ID)
 	if e.bad != "" {
 		w.throwf(ErrSyntax, "%s", e.bad)

@@ -85,17 +85,8 @@ func (x *Expression) resolve(w *worker) *Expression {
 
 	// A literal is the same value however often it is evaluated, so each of
 	// these is worked out once and kept against the node.
-	case p.URINode:
-		x.setValue(scope.literal(w, n, uriLiteral))
-
-	case p.PathNode:
-		x.setValue(scope.literal(w, n, pathLiteral))
-
-	case p.FloatNode:
-		x.setValue(scope.literal(w, n, floatLiteral))
-
-	case p.IntNode:
-		x.setValue(scope.literal(w, n, intLiteral))
+	case p.URINode, p.PathNode, p.FloatNode, p.IntNode:
+		x.setValue(scope.literal(w, n))
 
 	case p.StringNode, p.IStringNode:
 		x.setValue(x.evalString(w))
@@ -347,7 +338,7 @@ func (x *Expression) evalSelect(w *worker, nt p.NodeType) *Expression {
 			break
 		}
 		if val.Kind() != KindSet {
-			w.throwf(ErrType, "value is %s while a set was expected", anTypeName(w, val))
+			w.throwf(ErrType, "value is %s while a set was expected", anTypeName(val))
 		}
 		w.throwf(ErrMissingAttribute, "attribute '%s' missing", sym)
 	}

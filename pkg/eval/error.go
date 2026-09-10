@@ -78,7 +78,26 @@ const maxTraceFrames = 64
 // throwf raises an evaluation error, describing where it happened from the
 // expressions currently being evaluated.
 func (w *worker) throwf(kind ErrorKind, format string, args ...any) {
+	w.raise(&EvalError{Kind: kind, Msg: fmt.Sprintf(format, args...)})
+}
+
+// throwAt raises an evaluation error at a node, for a failure found while
+// evaluating something that has no expression of its own to be reported
+// from — reading a name, which goes straight to the binding.
+func (w *worker) throwAt(scope *Scope, n *p.Node, kind ErrorKind, format string, args ...any) {
 	err := &EvalError{Kind: kind, Msg: fmt.Sprintf(format, args...)}
+	if pr := scope.parser(); pr != nil {
+		if pos := pr.NodePos(n); pos != nil {
+			err.Pos, err.Line = pos, pr.SourceLine(pos)
+		}
+	}
+	w.raise(err)
+}
+
+// raise records where the failure happened on the evaluation stack and
+// panics with it. The panic is what unwinds the evaluation, so it never
+// returns.
+func (w *worker) raise(err *EvalError) {
 	err.capture(w.stack[:w.depth])
 	panic(err)
 }
@@ -111,18 +130,4 @@ func asEvalError(v any) *EvalError {
 		return err
 	}
 	return nil
-}
-
-// throwAt raises an evaluation error at a node, for a failure found while
-// evaluating something that has no expression of its own to be reported
-// from — reading a name, which goes straight to the binding.
-func (w *worker) throwAt(scope *Scope, n *p.Node, kind ErrorKind, format string, args ...any) {
-	err := &EvalError{Kind: kind, Msg: fmt.Sprintf(format, args...)}
-	if pr := scope.parser(); pr != nil {
-		if pos := pr.NodePos(n); pos != nil {
-			err.Pos, err.Line = pos, pr.SourceLine(pos)
-		}
-	}
-	err.capture(w.stack[:w.depth])
-	panic(err)
 }

@@ -184,8 +184,10 @@ func (v NixValue) Print(w *worker, recurse int) string {
 		return v.Set().Print(w, recurse)
 	case KindLambda:
 		return "«lambda»"
-	case KindPrimop, KindPartial:
-		return v.Lambda().(interface{ printOp() string }).printOp()
+	case KindPrimop:
+		return (*NixPrimop)(v.ptr).printOp()
+	case KindPartial:
+		return (*NixPartialPrimop)(v.ptr).printOp()
 	}
 	return "«unknown»"
 }
@@ -256,7 +258,7 @@ func TypeName(val NixValue) string {
 
 // anTypeName names a value the way error messages spell it, as in
 // "value is a list while a set was expected".
-func anTypeName(w *worker, val NixValue) string {
+func anTypeName(val NixValue) string {
 	switch val.kind {
 	case KindInt:
 		return "an integer"
@@ -286,7 +288,7 @@ func anTypeName(w *worker, val NixValue) string {
 // type error when it is not.
 func assertKind(w *worker, val NixValue, kind Kind, expected string) NixValue {
 	if val.kind != kind {
-		w.throwf(ErrType, "value is %s while %s was expected", anTypeName(w, val), expected)
+		w.throwf(ErrType, "value is %s while %s was expected", anTypeName(val), expected)
 	}
 	return val
 }
@@ -307,7 +309,7 @@ func assertString(w *worker, val NixValue) *NixString {
 
 func assertLambda(w *worker, val NixValue) NixLambda {
 	if !val.IsLambda() {
-		w.throwf(ErrType, "value is %s while a function was expected", anTypeName(w, val))
+		w.throwf(ErrType, "value is %s while a function was expected", anTypeName(val))
 	}
 	return val.Lambda()
 }
@@ -345,7 +347,7 @@ func CompareOrder(w *worker, a, b NixValue) int {
 		}
 		return sign(len(lhs) - len(rhs))
 	}
-	w.throwf(ErrType, "cannot compare %s with %s", anTypeName(w, a), anTypeName(w, b))
+	w.throwf(ErrType, "cannot compare %s with %s", anTypeName(a), anTypeName(b))
 	return 0
 }
 

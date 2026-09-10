@@ -51,7 +51,7 @@ func Arith(w *worker, a, b NixValue, op p.NodeType) NixValue {
 		if a.IsNumber() {
 			bad = b
 		}
-		w.throwf(ErrType, "value is %s while a number was expected", anTypeName(w, bad))
+		w.throwf(ErrType, "value is %s while a number was expected", anTypeName(bad))
 	}
 	return arith(w, a.toFloat(), b.toFloat(), op, Float)
 }
@@ -70,7 +70,7 @@ func Add(w *worker, a, b NixValue) NixValue {
 		case KindPath:
 			return PathValue(a.Path().Join(b.Path().String()))
 		}
-		w.throwf(ErrType, "value is %s while a string was expected", anTypeName(w, b))
+		w.throwf(ErrType, "value is %s while a string was expected", anTypeName(b))
 	}
 	return Arith(w, a, b, p.OpAddNode)
 }

@@ -76,7 +76,7 @@ func ValueToNative(w *worker, x NixValue) any {
 		}
 		return result
 	}
-	w.throwf(ErrType, "cannot convert %s to JSON", anTypeName(w, x))
+	w.throwf(ErrType, "cannot convert %s to JSON", anTypeName(x))
 	return nil
 }
 

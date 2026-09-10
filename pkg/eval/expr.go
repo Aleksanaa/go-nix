@@ -164,12 +164,6 @@ func (x *Expression) setThunk(scope *Scope, n *p.Node) {
 // speed without the memory, so this is worth revisiting per use.
 const exprSlabSize = 256
 
-// newExpr returns a zeroed expression. The block branch folds away when
-// blocks are disabled.
-func newExpr(w *worker) *Expression {
-	return w.newExpr()
-}
-
 // parser is the parser the expression's node belongs to. It is reached through
 // the scope rather than stored per expression, of which there are far more.
 func (x *Expression) parser() *p.Parser {

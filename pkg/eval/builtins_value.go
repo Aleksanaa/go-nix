@@ -53,7 +53,7 @@ func bFloor(w *worker, args ...*Expression) NixValue {
 
 func roundTo(w *worker, val NixValue, round func(float64) float64) NixValue {
 	if !val.IsNumber() {
-		w.throwf(ErrType, "value is %s while a number was expected", anTypeName(w, val))
+		w.throwf(ErrType, "value is %s while a number was expected", anTypeName(val))
 	}
 	return Int(int64(round(val.toFloat())))
 }

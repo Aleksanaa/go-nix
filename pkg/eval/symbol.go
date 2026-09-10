@@ -65,6 +65,7 @@ var (
 	symWrong    = Intern("wrong")
 	symSuccess  = Intern("success")
 	symValue    = Intern("value")
+	symName     = Intern("name")
 	symBuiltins = Intern("builtins")
 )
 

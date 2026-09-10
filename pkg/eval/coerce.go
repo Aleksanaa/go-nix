@@ -27,7 +27,7 @@ func coerceToString(w *worker, val NixValue, more bool) *NixString {
 		return val.Set().coerceToString(w, more)
 	}
 	if !more {
-		w.throwf(ErrType, "cannot coerce %s to a string", anTypeName(w, val))
+		w.throwf(ErrType, "cannot coerce %s to a string", anTypeName(val))
 	}
 	switch val.Kind() {
 	case KindInt:
@@ -45,7 +45,7 @@ func coerceToString(w *worker, val NixValue, more bool) *NixString {
 	case KindList:
 		return coerceListToString(w, val.List(), more)
 	}
-	w.throwf(ErrType, "cannot coerce %s to a string", anTypeName(w, val))
+	w.throwf(ErrType, "cannot coerce %s to a string", anTypeName(val))
 	return nil
 }
 
@@ -56,7 +56,7 @@ func (s *AttrSet) coerceToString(w *worker, more bool) *NixString {
 		val := x.Eval(w)
 		if !val.IsLambda() {
 			w.throwf(ErrType, "value of the __toString attribute is %s while a function was expected",
-				anTypeName(w, val))
+				anTypeName(val))
 		}
 		return coerceToString(w, applyToValue(w, val.Lambda(), SetValue(s)).Eval(w), more)
 	}

@@ -21,7 +21,7 @@ func (x *Expression) evalUnaryOp(w *worker, nt p.NodeType) NixValue {
 		case KindFloat:
 			return Float(-v.Float())
 		default:
-			w.throwf(ErrType, "value is %s while a number was expected", anTypeName(w, v))
+			w.throwf(ErrType, "value is %s while a number was expected", anTypeName(v))
 		}
 
 	case p.OpQuestionNode:

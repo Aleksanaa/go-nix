@@ -41,7 +41,7 @@ func bFunctionArgs(w *worker, args ...*Expression) NixValue {
 			// A builtin has no formal arguments to report.
 			return SetValue(NewSet(0))
 		}
-		w.throwf(ErrType, "value is %s while a function was expected", anTypeName(w, val))
+		w.throwf(ErrType, "value is %s while a function was expected", anTypeName(val))
 	}
 	f := val.Lambda().(*NixExprLambda)
 	result := NewSet(len(f.Formal))
@@ -107,15 +107,14 @@ func bListToAttrs(w *worker, args ...*Expression) NixValue {
 	list := assertList(w, args[0].Eval(w))
 	// Every element is forced below, to read a name out of it.
 	wait := forceAll(w, list)
-	nameSym, valueSym := Intern("name"), symValue
 	result := NewSet(len(list))
 	for _, x := range list {
 		entry := assertSet(w, x.Eval(w))
-		nameExpr, ok := entry.Get(nameSym)
+		nameExpr, ok := entry.Get(symName)
 		if !ok {
 			w.throwf(ErrMissingAttribute, "attribute 'name' missing in a list element of listToAttrs")
 		}
-		valExpr, ok := entry.Get(valueSym)
+		valExpr, ok := entry.Get(symValue)
 		if !ok {
 			w.throwf(ErrMissingAttribute, "attribute 'value' missing in a list element of listToAttrs")
 		}
