@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"sync"
 	"testing"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
@@ -65,4 +66,63 @@ func sameBlock(a, b []Expression) bool {
 		return false
 	}
 	return len(a) == 0 || &a[0] == &b[0]
+}
+
+// TestConcurrentEvaluationSharesTheFile is the milestone of phase D2: several
+// workers evaluate the same syntax at once, sharing its static store and its
+// literal values (which D1 made read-only) and the one symbol table (which D2
+// made safe). It must pass under -race, and every worker must agree.
+//
+// The source pins both halves of interning: `"common"` is a literal used as a
+// name, whose symbol the pass worked out in advance, and `"key${toString n}"`
+// is a name no pass could know, interned as it is evaluated.
+func TestConcurrentEvaluationSharesTheFile(t *testing.T) {
+	pr, err := p.ParseString(`let
+		mk = n: { "key${toString n}" = n; "common" = "same"; };
+	in builtins.map mk [ 1 2 3 ]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFile(pr) // prepared once, shared by every worker
+
+	ref, err := evalShared(f, pr.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const workers = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			got, err := evalShared(f, pr.Result)
+			if err != nil {
+				t.Errorf("evaluation failed: %v", err)
+				return
+			}
+			if got != ref {
+				t.Errorf("worker disagreed:\n got %s\nwant %s", got, ref)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+}
+
+// evalShared evaluates root in the shared file f on a fresh worker, returning
+// its full rendering.
+func evalShared(f *file, root *p.Node) (string, error) {
+	w := &worker{}
+	scope := *DefaultScope
+	scope.file = f
+	x := w.newExpr()
+	x.setThunk(&scope, root)
+	val, err := catching(func() NixValue { return x.Eval(w) })
+	if err != nil {
+		return "", err
+	}
+	return catching(func() string { return val.Print(w, -1) })
 }

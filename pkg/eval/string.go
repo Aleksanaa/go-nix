@@ -20,6 +20,10 @@ type NixString struct {
 
 // intern returns the symbol naming this string's content, interning it at
 // most once per string.
+//
+// The write is safe under the evaluator's concurrency: a string literal has
+// its symbol worked out by the pass before any worker runs, so the only
+// strings that reach the write are ones a single worker made for itself.
 func (str *NixString) intern() Sym {
 	if str.sym == 0 {
 		str.sym = Intern(str.Content)

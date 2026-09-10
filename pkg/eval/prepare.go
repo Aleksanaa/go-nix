@@ -129,7 +129,12 @@ func (pr *preparer) str(n *p.Node) {
 	}
 	var x Expression
 	x.setThunk(&Scope{file: pr.file}, n)
-	x.evalString(mainWorker)
+	val := x.evalString(mainWorker)
+	// The content is fixed by the syntax, so its symbol is too. Interning it
+	// now means a string literal used as an attribute name is a read, not a
+	// write, when workers evaluate it in parallel — the same value is shared
+	// by everyone who reaches the node.
+	val.Str().intern()
 }
 
 // attrPath works out what a path of plain identifiers names. One with an
