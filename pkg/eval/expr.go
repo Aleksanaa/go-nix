@@ -320,18 +320,27 @@ func (x *Expression) force() NixValue {
 		if evalDepth == maxCallDepth {
 			throwf(ErrEval, "stack overflow; possible infinite recursion")
 		}
-		evalStack[evalDepth] = evalFrame{
-			scope: x.scope(), node: x.node(), native: x.native(), blame: x.blame,
-		}
-		evalDepth++
-
+		// The frame is built inline rather than through the scope, node and
+		// native accessors: this is the hottest loop in the evaluator, and
+		// here what an unforced expression holds is already known — a and b
+		// are set, kind is KindNone, and b distinguishes a node from a
+		// builtin call.
+		frame := evalFrame{blame: x.blame}
 		var lower *Expression
-		switch {
-		case x.b != nil:
+		if x.b != nil {
+			frame.scope, frame.node = (*Scope)(x.a), (*p.Node)(x.b)
+			evalStack[evalDepth] = frame
+			evalDepth++
 			lower = x.resolve()
-		case x.a != nil:
-			x.setValue((*nativeCall)(x.a).run())
-		default:
+		} else if x.a != nil {
+			call := (*nativeCall)(x.a)
+			frame.native = call
+			evalStack[evalDepth] = frame
+			evalDepth++
+			x.setValue(call.run())
+		} else {
+			evalStack[evalDepth] = frame
+			evalDepth++
 			throwf(ErrEval, "expression has nothing to evaluate")
 		}
 		if x.kind != KindNone {

@@ -6,7 +6,7 @@ func bAttrNames(args ...*Expression) NixValue {
 	set := assertSet(args[0].Eval())
 	result := make(NixList, 0, set.Len())
 	for _, sym := range set.Keys() {
-		result = append(result, value(String(sym.String())))
+		result = append(result, value(StrValue(stringSym(sym.String(), sym))))
 	}
 	return ListValue(result)
 }
@@ -23,7 +23,7 @@ func bAttrValues(args ...*Expression) NixValue {
 
 // bCatAttrs collects an attribute from every set of a list that has it.
 func bCatAttrs(args ...*Expression) NixValue {
-	sym := Intern(assertString(args[0].Eval()).Content)
+	sym := assertString(args[0].Eval()).intern()
 	list := assertList(args[1].Eval())
 	result := make(NixList, 0, len(list))
 	for _, x := range list {
@@ -52,7 +52,7 @@ func bFunctionArgs(args ...*Expression) NixValue {
 }
 
 func bGetAttr(args ...*Expression) NixValue {
-	sym := Intern(assertString(args[0].Eval()).Content)
+	sym := assertString(args[0].Eval()).intern()
 	set := assertSet(args[1].Eval())
 	x, ok := set.Get(sym)
 	if !ok {
@@ -66,7 +66,7 @@ func bGroupBy(args ...*Expression) NixValue {
 	list := assertList(args[1].Eval())
 	groups := make(map[Sym]NixList)
 	for _, x := range list {
-		sym := Intern(assertString(f.Apply(x).Eval()).Content)
+		sym := assertString(f.Apply(x).Eval()).intern()
 		groups[sym] = append(groups[sym], x)
 	}
 	result := NewSet(len(groups))
@@ -77,7 +77,7 @@ func bGroupBy(args ...*Expression) NixValue {
 }
 
 func bHasAttr(args ...*Expression) NixValue {
-	sym := Intern(assertString(args[0].Eval()).Content)
+	sym := assertString(args[0].Eval()).intern()
 	return Bool(assertSet(args[1].Eval()).Has(sym))
 }
 
@@ -117,7 +117,7 @@ func bListToAttrs(args ...*Expression) NixValue {
 		if !ok {
 			throwf(ErrMissingAttribute, "attribute 'value' missing in a list element of listToAttrs")
 		}
-		result.Bind1(Intern(assertString(nameExpr.Eval()).Content), valExpr)
+		result.Bind1(assertString(nameExpr.Eval()).intern(), valExpr)
 	}
 	return SetValue(result.keepFirst())
 }
@@ -127,7 +127,7 @@ func bRemoveAttrs(args ...*Expression) NixValue {
 	names := assertList(args[1].Eval())
 	drop := make([]Sym, 0, len(names))
 	for _, x := range names {
-		drop = append(drop, Intern(assertString(x.Eval()).Content))
+		drop = append(drop, assertString(x.Eval()).intern())
 	}
 	result := make([]attr, 0, set.Len())
 	for _, a := range set.attrs {

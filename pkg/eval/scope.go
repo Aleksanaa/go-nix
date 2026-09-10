@@ -218,6 +218,11 @@ func (scope *Scope) evalNode(n *p.Node) NixValue {
 		}
 		return x.Eval()
 	}
+	// A literal is already a value: it needs no thunk, no evaluation frame
+	// and no forcing, only the number read out of the node's cache.
+	if val, ok := scope.literalValue(n); ok {
+		return val
+	}
 	var y Expression
 	y.setThunk(scope, n)
 	return y.Eval()
@@ -258,9 +263,9 @@ func (scope *Scope) attrSym(n *p.Node) Sym {
 	case p.IDNode:
 		return scope.name(n)
 	case p.StringNode, p.IStringNode:
-		return Intern(CoerceToString(scope.evalNode(n)).Content)
+		return CoerceToString(scope.evalNode(n)).intern()
 	case p.InterpNode:
-		return Intern(CoerceToString(scope.evalNode(n.Nodes[0])).Content)
+		return CoerceToString(scope.evalNode(n.Nodes[0])).intern()
 	default:
 		throwf(ErrEval, "unsupported attribute name: %v", n.Type)
 		return 0

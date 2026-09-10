@@ -9,7 +9,28 @@ import "strings"
 // lives behind a pointer that most of them never allocate.
 type NixString struct {
 	Content string
-	extra   *stringExtra
+	// sym is the interned name of the content, or zero until something asks
+	// for it. Strings are used as attribute names in pairs of operations —
+	// attrNames hands them out, getAttr and `.${name}` look them up — and
+	// interning the same content over again was the largest cost of an
+	// attribute-heavy evaluation.
+	sym   Sym
+	extra *stringExtra
+}
+
+// intern returns the symbol naming this string's content, interning it at
+// most once per string.
+func (str *NixString) intern() Sym {
+	if str.sym == 0 {
+		str.sym = Intern(str.Content)
+	}
+	return str.sym
+}
+
+// stringSym makes a string that is already known to be the name sym, so that
+// reading it back as a name costs nothing.
+func stringSym(s string, sym Sym) *NixString {
+	return &NixString{Content: s, sym: sym}
 }
 
 // stringExtra is what a string carries besides its content: the derivations it

@@ -8,7 +8,6 @@
 package eval
 
 import (
-	"strconv"
 	"strings"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
@@ -87,32 +86,16 @@ func (x *Expression) resolve() *Expression {
 	// A literal is the same value however often it is evaluated, so each of
 	// these is worked out once and kept against the node.
 	case p.URINode:
-		x.setValue(scope.literal(n, func(s string) NixValue { return String(s) }))
+		x.setValue(scope.literal(n, uriLiteral))
 
 	case p.PathNode:
-		// TODO: resolve relative to the file being evaluated, and <lookup>
-		// paths through NIX_PATH.
-		x.setValue(scope.literal(n, func(s string) NixValue {
-			return PathValue(&NixPath{Root: "/", Path: s})
-		}))
+		x.setValue(scope.literal(n, pathLiteral))
 
 	case p.FloatNode:
-		x.setValue(scope.literal(n, func(s string) NixValue {
-			val, err := strconv.ParseFloat(s, 64)
-			if err != nil {
-				throwf(ErrSyntax, "invalid float %q", s)
-			}
-			return Float(val)
-		}))
+		x.setValue(scope.literal(n, floatLiteral))
 
 	case p.IntNode:
-		x.setValue(scope.literal(n, func(s string) NixValue {
-			val, err := strconv.ParseInt(s, 10, 64)
-			if err != nil {
-				throwf(ErrSyntax, "invalid integer %q", s)
-			}
-			return Int(val)
-		}))
+		x.setValue(scope.literal(n, intLiteral))
 
 	case p.StringNode, p.IStringNode:
 		x.setValue(x.evalString())

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"slices"
+	"strconv"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
@@ -80,6 +81,49 @@ type file struct {
 // counted them, so the array they go in is allocated once, at the right size.
 func newFile(pr *p.Parser) *file {
 	return &file{parser: pr, static: staticStore{entries: make([]static, pr.NodeCount())}}
+}
+
+// The value of each kind of literal, computed at most once per node.
+
+func uriLiteral(s string) NixValue { return String(s) }
+
+// TODO: resolve relative to the file being evaluated, and <lookup> paths
+// through NIX_PATH.
+func pathLiteral(s string) NixValue { return PathValue(&NixPath{Root: "/", Path: s}) }
+
+func floatLiteral(s string) NixValue {
+	val, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		throwf(ErrSyntax, "invalid float %q", s)
+	}
+	return Float(val)
+}
+
+func intLiteral(s string) NixValue {
+	val, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		throwf(ErrSyntax, "invalid integer %q", s)
+	}
+	return Int(val)
+}
+
+// literalValue returns the value of a literal node, computing it at most
+// once. It is for reading a literal with no expression around it, where there
+// is no thunk to hold the value: an operand of an arithmetic expression is
+// usually a literal or a name, and going through the whole force machinery
+// for a number was a measurable cost on call-heavy workloads.
+func (scope *Scope) literalValue(n *p.Node) (NixValue, bool) {
+	switch n.Type {
+	case p.IntNode:
+		return scope.literal(n, intLiteral), true
+	case p.FloatNode:
+		return scope.literal(n, floatLiteral), true
+	case p.PathNode:
+		return scope.literal(n, pathLiteral), true
+	case p.URINode:
+		return scope.literal(n, uriLiteral), true
+	}
+	return NixValue{}, false
 }
 
 // literal returns the value of a literal node, computing it at most once.

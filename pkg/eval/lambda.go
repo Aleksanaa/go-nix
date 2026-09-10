@@ -181,6 +181,32 @@ const maxSpine = 8
 // pointed x at the body to carry on with in place.
 func applySpine(x *Expression, fn NixLambda, args []*Expression) *Expression {
 	for {
+		if op, ok := fn.(*NixPrimop); ok && len(args) >= op.ArgNum {
+			// The spine holds every argument the builtin takes, so the call
+			// is built outright: no partial application to construct, force
+			// and take apart again. `bitAnd x 3` and its kin are what a
+			// filter or a fold spends most of its time on.
+			var call [maxPrimopArgs]*Expression
+			copy(call[:], args[:op.ArgNum])
+			y := x
+			if len(args) > op.ArgNum {
+				// More arguments than the builtin takes: it is being used
+				// curried, and the result has to be forced to find the
+				// function the rest apply to. That cannot happen in place —
+				// x is already being forced — so the call gets its own
+				// expression.
+				y = newExpr()
+			}
+			y.a = unsafe.Pointer(&nativeCall{op: op, args: call})
+			y.b = nil
+			y.blame = blamePrimop
+			if y == x {
+				return nil
+			}
+			fn, args = assertLambda(y.Eval()), args[op.ArgNum:]
+			continue
+		}
+
 		lam, ok := fn.(*NixExprLambda)
 		if !ok || lam.HasFormal {
 			// A builtin, or a function matching a formal argument set: those
@@ -260,23 +286,18 @@ func applyToValue(f NixLambda, v NixValue) *Expression {
 }
 
 // bindArgs binds a call's arguments, one scope per argument, and returns the
-// innermost. The scopes of one call are allocated together: each keeps the one
-// before it alive anyway, so a block retains nothing extra, and a call of
-// several arguments costs one allocation rather than one per argument.
+// innermost. Each scope keeps the one before it alive anyway, so taking them
+// from the same block retains nothing extra, and a call of several arguments
+// costs one slab allocation rather than one allocation per argument.
 func bindArgs(outer *Scope, infos []*lambdaInfo, args []*Expression) *Scope {
-	if len(infos) == 1 {
-		// One argument is the common case by far, and an object of its own
-		// size class is cheaper to get than a slice.
-		return outer.Subscope1(infos[0].Arg, args[0])
-	}
-	scopes := make([]Scope, len(infos))
 	parent := outer
-	for i := range scopes {
-		scopes[i] = Scope{
-			sym: infos[i].Arg, bound: unsafe.Pointer(args[i]),
+	for i, info := range infos {
+		s := newScope()
+		*s = Scope{
+			sym: info.Arg, bound: unsafe.Pointer(args[i]),
 			Parent: parent, file: outer.file,
 		}
-		parent = &scopes[i]
+		parent = s
 	}
 	return parent
 }
