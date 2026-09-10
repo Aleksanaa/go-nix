@@ -155,17 +155,24 @@ func bDeepSeq(w *worker, args ...*Expression) NixValue {
 	return args[1].Eval(w)
 }
 
-// deepForce evaluates a value and everything reachable from it.
+// deepForce evaluates a value and everything reachable from it. A set or a
+// list forces every element it holds, so they are given a head start across
+// the pool: deepSeq's whole point is to force everything, so nothing is forced
+// that would not have been anyway.
 func deepForce(w *worker, val NixValue) {
 	switch val.Kind() {
 	case KindList:
+		wait := forceAll(w, val.List())
 		for _, x := range val.List() {
 			deepForce(w, x.Eval(w))
 		}
+		wait()
 	case KindSet:
+		wait := forceAll(w, val.Set().values())
 		for _, a := range val.Set().attrs {
 			deepForce(w, a.x.Eval(w))
 		}
+		wait()
 	}
 }
 

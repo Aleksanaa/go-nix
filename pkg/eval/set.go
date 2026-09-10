@@ -46,6 +46,18 @@ func (s *AttrSet) Len() int {
 	return len(s.attrs)
 }
 
+// values is the expressions this set binds, for the places that force every
+// one of them — deepSeq and toJSON — where it is the set's counterpart to a
+// list's elements. What a set's values are, unlike its names, is not decided
+// until the set is built, so this copies rather than caching.
+func (s *AttrSet) values() []*Expression {
+	xs := make([]*Expression, len(s.attrs))
+	for i, a := range s.attrs {
+		xs[i] = a.x
+	}
+	return xs
+}
+
 // cmpSym orders attributes by symbol, which is the order they are kept in.
 // Symbols are interned in first-seen order, so this is not alphabetical; what
 // has to be read alphabetically asks Keys.

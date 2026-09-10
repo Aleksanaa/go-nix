@@ -212,3 +212,59 @@ func TestForkedFailureKeepsSourceOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestSetForceKeepsSourceOrder pins the same guarantee for the places that
+// force every value of a set — deepSeq and toJSON — which is the shape a
+// package's dependency closure has. The forked pass swallows, and the ordinary
+// loop meets the real failure in order, so the earlier attribute is the one
+// reported even when a later one fails too.
+func TestSetForceKeepsSourceOrder(t *testing.T) {
+	forking(t)
+	for _, test := range []struct{ src, want string }{
+		{`builtins.deepSeq (builtins.listToAttrs (builtins.genList (i:
+		    if i == 10 then { name = "k${toString i}"; value = throw "ten"; }
+		    else if i == 20 then { name = "k${toString i}"; value = throw "twenty"; }
+		    else { name = "k${toString i}"; value = i; }) 100)) 1`, "ten"},
+		{`builtins.stringLength (builtins.toJSON (builtins.listToAttrs (builtins.genList (i:
+		    if i == 10 then { name = "k${toString i}"; value = throw "ten"; }
+		    else if i == 20 then { name = "k${toString i}"; value = throw "twenty"; }
+		    else { name = "k${toString i}"; value = i; }) 100)))`, "ten"},
+	} {
+		err := evalWithin(t, test.src)
+		e, ok := err.(*EvalError)
+		if !ok {
+			t.Errorf("got %v, want an *EvalError", err)
+			continue
+		}
+		if e.Msg != test.want {
+			t.Errorf("failed with %q, want %q — a fork reordered the failure", e.Msg, test.want)
+		}
+		if len(e.Trace) == 0 {
+			t.Errorf("%q came back without a backtrace", e.Msg)
+		}
+	}
+}
+
+// TestFixpointForcesInParallel pins that forking a set's values does not
+// disturb a fixpoint. `fix = f: let x = f x; in x` materialises to a set
+// before its values are forced, so a value reaching back into the set — here
+// every value reads `self.p0.idx` — is a DAG edge, not a cycle. The parallel
+// pass must force all 64 values and resolve every cross-reference exactly as
+// the sequential walk would: the sum of `idx + buddy` is 0..63 = 2016.
+func TestFixpointForcesInParallel(t *testing.T) {
+	forking(t)
+	got, err := evalPrint(t, `let
+	  fix = f: let x = f x; in x;
+	  mk = self: builtins.listToAttrs (builtins.genList (i: {
+	    name = "p${toString i}";
+	    value = { idx = i; buddy = self.p0.idx; };
+	  }) 64);
+	  set = fix mk;
+	in builtins.deepSeq set (builtins.foldl' (a: p: a + p.idx + p.buddy) 0 (builtins.attrValues set))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "2016"; got != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+}

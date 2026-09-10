@@ -93,6 +93,7 @@ be scaled without editing it.
 | `strings` | interpolation, concatenation and the string builtins |
 | `lazy` | creating three million thunks and forcing thirty thousand |
 | `fix` | a fixpoint with an overlay, the shape Nixpkgs is built from |
+| `set-force` | forcing every value of a wide set, the shape of a dependency closure |
 
 ```sh
 $ gon eval -f examples/hanoi.nix

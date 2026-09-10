@@ -70,10 +70,14 @@ func ValueToNative(w *worker, x NixValue) any {
 		if t.Has(symOutPath) {
 			return t.coerceToString(w, false).Content
 		}
+		// Serialising forces every value, so they are given a head start
+		// across the pool and the loop below finds them already there.
+		wait := forceAll(w, t.values())
 		result := make(map[string]any, t.Len())
 		for _, a := range t.attrs {
 			result[a.sym.String()] = ValueToNative(w, a.x.Eval(w))
 		}
+		wait()
 		return result
 	}
 	w.throwf(ErrType, "cannot convert %s to JSON", anTypeName(x))
