@@ -21,16 +21,16 @@ var evalMain = register("eval", func() {
 	if *evalFile {
 		parse = parser.ParseFile
 	}
-	pr, err := parse(*evalExprArg)
+	pr, err := timed2("parse", func() (*parser.Parser, error) { return parse(*evalExprArg) })
 	fail(err)
-	val, err := eval.Eval(pr)
+	val, err := timed2("eval", func() (eval.NixValue, error) { return eval.Eval(pr) })
 	fail(err)
 	depth := *evalDepth
 	if *evalStrict {
 		depth = -1 // negative never reaches zero, so nothing is abbreviated
 	}
 	// Printing forces the value, so it can fail just as evaluating it can.
-	s, err := eval.Print(val, depth)
+	s, err := timed2("print", func() (string, error) { return eval.Print(val, depth) })
 	fail(err)
 	fmt.Println(s)
 })

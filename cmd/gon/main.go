@@ -46,4 +46,5 @@ func main() {
 			profile.ProfilePath(".")).Stop()
 	}
 	actions[action]()
+	report()
 }
