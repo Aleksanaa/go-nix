@@ -113,7 +113,7 @@ func (x *Expression) evalBinaryOp(w *worker, nt p.NodeType) NixValue {
 	}
 }
 
-// operands evaluates both sides of an operator that forces both, on two
+// operandsForked evaluates both sides of an operator that forces both, on two
 // workers where there is one to spare.
 //
 // This is the only fork point inside the evaluator rather than inside a
@@ -123,9 +123,10 @@ func (x *Expression) evalBinaryOp(w *worker, nt p.NodeType) NixValue {
 // costs far more than doing it — is the budget: a worker splits what it has
 // with the side it gives away, so the forking stops a few levels in and the
 // subtrees run whole.
-// operandsForked is operands where a worker is to be spared. It is out of
-// line because a function that starts a goroutine cannot be inlined, and
-// operands is on the path of every operator in every evaluation.
+//
+// It is out of line because a function that starts a goroutine cannot be
+// inlined, and evalBinaryOp is on the path of every operator in every
+// evaluation.
 func (x *Expression) operandsForked(w *worker) (lhs, rhs NixValue) {
 	rhsNode := x.node().Nodes[1]
 	// The node type is in hand and settles most operands — a name, a literal —
@@ -136,10 +137,17 @@ func (x *Expression) operandsForked(w *worker) (lhs, rhs NixValue) {
 	y := x.WithNode(w, rhsNode)
 	give := w.budget / 2
 	w.budget -= give
+	// The budget is given back however this returns. The wait for the fork is
+	// not: it is called below rather than deferred, so that a failure unwinding
+	// past here does not wait while still holding claims the fork may want. See
+	// the note on waiting for a fork in pool.go.
+	defer func() { w.budget += give }()
 
 	done := make(chan struct{})
+	end := forkBegin()
 	go func() {
 		defer close(done)
+		defer end()
 		cw := takeWorker()
 		defer dropWorker(cw)
 		cw.budget = give
@@ -147,16 +155,14 @@ func (x *Expression) operandsForked(w *worker) (lhs, rhs NixValue) {
 		// forced again below, in order, and fails there with its backtrace.
 		catching(func() struct{} { y.Eval(cw); return struct{}{} })
 	}()
-	// Waited for even when the left side fails, so that no work outlives the
-	// evaluation that asked for it.
-	defer func() {
-		<-done
-		w.budget += give
-	}()
 
-	// Receiving twice from a closed channel is harmless, so the defer above
-	// simply finds the wait already done.
 	lhs = x.operand(w, 0)
+	// Forced rather than taken from the channel: while the forked worker still
+	// holds the claim this blocks behind it in the wait graph, where a cycle
+	// between the two of us is seen and reported instead of hanging.
+	rhs = y.Eval(w)
+	// Nothing is left for it to claim now that y has a value, so this cannot
+	// block on us, and it keeps the fork from outliving the operator.
 	<-done
-	return lhs, y.Eval(w)
+	return lhs, rhs
 }

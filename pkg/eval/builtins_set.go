@@ -106,7 +106,7 @@ func bIntersectAttrs(w *worker, args ...*Expression) NixValue {
 func bListToAttrs(w *worker, args ...*Expression) NixValue {
 	list := assertList(w, args[0].Eval(w))
 	// Every element is forced below, to read a name out of it.
-	forceAll(w, list)
+	wait := forceAll(w, list)
 	nameSym, valueSym := Intern("name"), symValue
 	result := NewSet(len(list))
 	for _, x := range list {
@@ -121,6 +121,7 @@ func bListToAttrs(w *worker, args ...*Expression) NixValue {
 		}
 		result.Bind1(assertString(w, nameExpr.Eval(w)).intern(), valExpr)
 	}
+	wait()
 	return SetValue(result.keepFirst())
 }
 

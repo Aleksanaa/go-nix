@@ -211,12 +211,20 @@ func TestConcurrentForceSharesThunks(t *testing.T) {
 // evaluatingInParallel turns on the mode that makes a thunk's claim atomic,
 // and turns it off again. A test that runs workers at once must set it: with
 // one worker the claim is touched plainly, which is what keeps the ordinary
-// evaluation as fast as it was before there were workers at all.
+// evaluation as fast as it was before there were workers at all — and putting
+// it back is what leaves that plain path covered by the tests that follow.
+//
+// The restore waits first, for the reason forking does: a failure walks away
+// from the workers it forked, and writing this while one of them still reads
+// it is a race.
 func evaluatingInParallel(t *testing.T) {
 	t.Helper()
 	was := parallel
 	parallel = true
-	t.Cleanup(func() { parallel = was })
+	t.Cleanup(func() {
+		waitForForks(t)
+		parallel = was
+	})
 }
 
 // catching2 is catching for a slice, which its type parameter cannot infer

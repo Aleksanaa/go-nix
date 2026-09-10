@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 )
 
 // Forcing thunks on more than one goroutine.
@@ -70,17 +71,85 @@ func goParallel() bool {
 // and the waiting cost more than the forcing does.
 const forkMinItems = 64
 
-// forceAll forces every expression in xs across the pool, for a caller that is
-// about to force them all itself.
+// worthForking reports whether n items are worth handing out, and turns the
+// parallel mode on if they are.
 //
-// With one worker it does nothing at all: the caller's own loop is the forcing,
-// in the order the language says. With several it is a head start, and the
-// caller's loop then finds the values already there.
-func forceAll(w *worker, xs []*Expression) {
-	if len(xs) < forkMinItems || !goParallel() {
-		return
+// It asks about the caller's budget as well as the length, so that a worker
+// which was itself forked does not fork again: see forceAll for what happens
+// when it can. A caller that has to build the expressions before there is
+// anything to hand out asks this first, rather than building them and finding
+// out afterwards.
+func worthForking(w *worker, n int) bool {
+	return n >= forkMinItems && w.budget >= 2 && goParallel()
+}
+
+// Waiting for a worker we forked, and why it is never done while holding a
+// claim.
+//
+// A worker blocked behind a claim is recorded in the wait graph, and a cycle
+// there is caught and reported as the recursion it is. A worker blocked on a
+// channel is recorded nowhere: it is behind no claim, so nothing links it to
+// the worker it waits for. Wait for a fork while still holding claims and the
+// two meet — the forked worker blocks behind a claim of ours, we block on its
+// channel, and the cycle has an edge the graph cannot see. Both fork points
+// hung on that before they were written this way round.
+//
+// So the value a fork produces is never taken from the channel. It is taken by
+// forcing the thunk, which is the one wait that is watched: if the forked
+// worker still holds the claim, we block behind it in the graph like anyone
+// else, and a deadlock against us is a cycle like any other.
+//
+// What is left to wait for afterwards is only the forked worker's way out,
+// which needs no claim of ours and so cannot block on one. That wait is safe,
+// and it is what keeps the pool from growing without bound.
+//
+// It is skipped where a failure is unwinding past it, which is why these waits
+// are called rather than deferred. The claims this worker holds are released as
+// it unwinds, so a forked worker blocked behind one is freed by the very
+// unwinding that would otherwise be waiting for it, and finishes on its own
+// with whatever it was forcing memoized.
+
+// liveForks counts the workers that have been forked and have not finished.
+//
+// An evaluation never reads it: a fork it walked away from finishes by itself,
+// and what that fork forces is memoized rather than lost. It is here for the
+// tests, which do need to know. The knobs above are written where the process
+// starts and read on the evaluation path, so a test that puts one back has to
+// wait for the workers an earlier failure abandoned — otherwise it writes one
+// while an abandoned worker is still reading it, which is a race, and the race
+// detector duly finds it.
+var liveForks atomic.Int64
+
+// forkBegin records a forked worker and returns the call that records its end.
+// Both are here rather than at the fork points so that neither can be written
+// without the other, and it is called before the goroutine starts rather than
+// inside it, so that a count taken in between is not short.
+func forkBegin() func() {
+	liveForks.Add(1)
+	return func() { liveForks.Add(-1) }
+}
+
+// forceAll starts forcing every expression in xs across the pool, for a caller
+// that is about to force them all itself, and hands back the wait for the pool
+// to be done with them.
+//
+// With one worker it does nothing at all: the caller's own loop is the
+// forcing, in the order the language says. With several it is a head start,
+// and the caller's loop then finds the values already there.
+//
+// It spends the caller's budget to do it, as the operand fork does, and a
+// worker that was itself forked has none. Without that a chunk could fork
+// chunks of its own: a set built out of sets would hand out parWorkers workers
+// per level, and — worse — a failure could go round in circles. A cycle
+// through a forked list throws and releases the claim, an abandoned chunk
+// picks the same thunk up, forks a fresh set of chunks, and fails the same way
+// again, for as long as there is memory to make workers in. That ran the
+// machine out of it.
+func forceAll(w *worker, xs []*Expression) func() {
+	if !worthForking(w, len(xs)) {
+		return func() {}
 	}
-	forkRange(len(xs), func(w *worker, lo, hi int) {
+	return forkRange(len(xs), func(w *worker, lo, hi int) {
 		for _, x := range xs[lo:hi] {
 			x.Eval(w)
 		}
@@ -88,24 +157,27 @@ func forceAll(w *worker, xs []*Expression) {
 }
 
 // forkRange runs body over [0,n) split into contiguous chunks, one per worker,
-// and waits for all of them. A chunk that fails is abandoned: whatever it
-// forced stays forced, and the caller meets the failure in its own order.
-func forkRange(n int, body func(w *worker, lo, hi int)) {
+// and hands back the wait for all of them. A chunk that fails is abandoned:
+// whatever it forced stays forced, and the caller meets the failure in its own
+// order.
+func forkRange(n int, body func(w *worker, lo, hi int)) func() {
 	p := min(parWorkers, n)
 	chunk := (n + p - 1) / p
 	var wg sync.WaitGroup
 	for lo := 0; lo < n; lo += chunk {
 		hi := min(lo+chunk, n)
 		wg.Add(1)
+		end := forkBegin()
 		go func() {
 			defer wg.Done()
+			defer end()
 			w := takeWorker()
 			defer dropWorker(w)
 			// A failure here is not this pass's to report.
 			catching(func() struct{} { body(w, lo, hi); return struct{}{} })
 		}()
 	}
-	wg.Wait()
+	return wg.Wait
 }
 
 // Workers are reused rather than made per chunk: one carries a backtrace stack
@@ -128,22 +200,32 @@ func dropWorker(w *worker) {
 func init() { mainWorker.budget = parWorkers }
 
 // forkOps says whether operator operands are forked as well as the builtins
-// that force whole lists. It is separate from GON_PAR, and off, because
-// whether it wins depends entirely on the shape of the code:
+// that force whole lists. It is separate from GON_PAR, and still off, though
+// no longer because it is dangerous:
 //
-//	hanoi-calls  274ms → 53ms at eight workers, against nix's 192ms
-//	lists         84ms → 53ms                            nix's  62ms
-//	attrs         87ms → 204ms
-//	fix          126ms → 215ms
+//	                default  GON_PAR_OPS=1   nix
+//	hanoi-calls          247             50   190
+//	lookup               118            137    86
+//	lazy                 122            137    82
+//	hanoi                116            135    78
+//	attrs                 75             79    60
 //
 // The win is a recursion that splits into two large independent halves, which
-// is what a fork is for. The loss is a fold whose operand happens to be a call
-// — `acc + builtins.getAttr name set` — where the work handed over is over
-// before the goroutine that took it has started, fifty thousand times.
+// is what a fork is for. The loss used to be a fold whose operand happens to
+// be a call — `acc + builtins.getAttr name set` — where the work handed over
+// was over before the goroutine that took it had started, fifty thousand
+// times; that cost `attrs` 87ms → 204ms until the pass began marking calls
+// that reach the function they are written inside, and only those are forked.
 //
-// Telling those apart is the missing piece, and it is not the syntax: both are
-// an application in an operand. It is how much work the call turns out to be,
-// which only evaluating it once says. The next step is to have the pass mark a
-// call that reaches the function it is written inside — a recursive call, the
-// shape that divides and conquers — and fork only those.
+// What is left is smaller and of a different kind. `hanoi` forks by the mark
+// and gains nothing: its halves are lists, and the `++` that joins them copies
+// both, so the concatenation sits on the critical path however cheap the
+// halves become. `lookup` and `lazy` barely fork at all and lose anyway,
+// because one fork anywhere turns goParallel on for the rest of the run and
+// the atomic claim is then paid everywhere.
+//
+// So the question is still the one marking could not answer: not which
+// applications are worth forking, but how much work one turns out to be. Only
+// evaluating it once says, and the worker's per-node memo from D1 is where a
+// count of that would go.
 var forkOps = os.Getenv("GON_PAR_OPS") == "1"
