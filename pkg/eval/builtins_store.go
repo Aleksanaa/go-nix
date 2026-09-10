@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/aleksanaa/go-nix/pkg/nixhash"
+	"github.com/aleksanaa/go-nix/pkg/source"
 )
 
 // The store builtins: the small primitives a derivation needs to name its
@@ -50,24 +51,39 @@ func bToFile(w *worker, args ...*Expression) NixValue {
 func bHashString(w *worker, args ...*Expression) NixValue {
 	algo := assertString(w, args[0].Eval(w)).Content
 	s := assertString(w, args[1].Eval(w)).Content
+	return String(hashBytes(w, algo, []byte(s)))
+}
+
+// bHashFile implements builtins.hashFile: the base-16 digest of a file.
+func bHashFile(w *worker, args ...*Expression) NixValue {
+	algo := assertString(w, args[0].Eval(w)).Content
+	p := coerceToPath(w, args[1].Eval(w))
+	data, err := source.ReadFile(p)
+	if err != nil {
+		w.throwf(ErrEval, "cannot read '%s': %s", p, err)
+	}
+	return String(hashBytes(w, algo, data))
+}
+
+func hashBytes(w *worker, algo string, data []byte) string {
 	var sum []byte
 	switch algo {
 	case "md5":
-		h := md5.Sum([]byte(s))
+		h := md5.Sum(data)
 		sum = h[:]
 	case "sha1":
-		h := sha1.Sum([]byte(s))
+		h := sha1.Sum(data)
 		sum = h[:]
 	case "sha256":
-		h := sha256.Sum256([]byte(s))
+		h := sha256.Sum256(data)
 		sum = h[:]
 	case "sha512":
-		h := sha512.Sum512([]byte(s))
+		h := sha512.Sum512(data)
 		sum = h[:]
 	default:
 		w.throwf(ErrEval, "unknown hash algorithm '%s'", algo)
 	}
-	return String(hex.EncodeToString(sum))
+	return hex.EncodeToString(sum)
 }
 
 // bBaseNameOf implements builtins.baseNameOf, using Nix's legacy string form:

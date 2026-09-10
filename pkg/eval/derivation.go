@@ -21,11 +21,16 @@ import (
 // stringContext is one reference a string carries to a derivation or a store
 // path. It is what a derivation's inputs are collected from: every string an
 // attribute is coerced to carries the references it picked up along the way.
+//
+// A reference is described by the store path it names — a derivation path for
+// a built output or a deep reference, a plain path for a source — rather than
+// by an in-memory derivation, so that getContext and appendContext can build
+// and read it without the derivation object at hand.
 type stringContext struct {
-	drv  *Derivation // the derivation referenced, for a built output or a deep reference
-	out  string      // output name, when this is a built output
-	path string      // store path, for a plain source reference
-	deep bool        // drvPath reference: the whole derivation
+	drvPath string // derivation path, for a built output or a deep reference
+	out     string // output name, when this is a built output
+	path    string // store path, for a plain source reference
+	deep    bool   // drvPath reference: the whole derivation
 }
 
 // Derivation is a built derivation: the nixhash.Derivation being serialised,
@@ -88,13 +93,13 @@ func stringWithContext(content string, ctx ...stringContext) *NixString {
 // reference that makes whatever interpolates it depend on the whole
 // derivation.
 func drvPathString(d *Derivation) *NixString {
-	return stringWithContext(d.drvPath, stringContext{drv: d, deep: true})
+	return stringWithContext(d.drvPath, stringContext{drvPath: d.drvPath, deep: true})
 }
 
 // outputString is one output's store path as a string carrying the built
 // reference to that output.
 func outputString(d *Derivation, out string) *NixString {
-	return stringWithContext(d.outPaths[out], stringContext{drv: d, out: out})
+	return stringWithContext(d.outPaths[out], stringContext{drvPath: d.drvPath, out: out})
 }
 
 // derivationStrictInternal builds a derivation from an attribute set and
@@ -256,7 +261,7 @@ func addInputs(w *worker, drv *nixhash.Derivation, context []stringContext) {
 	for _, c := range context {
 		switch {
 		case c.deep:
-			for _, p := range derivationClosure(c.drv) {
+			for _, p := range derivationClosure(c.drvPath) {
 				addSrc(p)
 				if d := lookupDerivation(p); d != nil {
 					for _, o := range d.outputs {
@@ -264,8 +269,8 @@ func addInputs(w *worker, drv *nixhash.Derivation, context []stringContext) {
 					}
 				}
 			}
-		case c.drv != nil:
-			addDrv(c.drv.drvPath, c.out)
+		case c.drvPath != "":
+			addDrv(c.drvPath, c.out)
 		case c.path != "":
 			addSrc(c.path)
 		}
@@ -296,7 +301,7 @@ func slicesCompact(s []string) []string {
 // derivationClosure returns every store path reachable from a derivation, in
 // ascending order: its own path and, transitively, the paths it names as
 // inputs.
-func derivationClosure(d *Derivation) []string {
+func derivationClosure(drvPath string) []string {
 	seen := map[string]bool{}
 	var out []string
 	var visit func(string)
@@ -315,7 +320,7 @@ func derivationClosure(d *Derivation) []string {
 			}
 		}
 	}
-	visit(d.drvPath)
+	visit(drvPath)
 	sort.Strings(out)
 	return out
 }

@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"unsafe"
+
+	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
 // AttrSet is an attribute set: the names it binds, each with the expression
@@ -31,6 +33,10 @@ type NixSet = *AttrSet
 type attr struct {
 	sym Sym
 	x   *Expression
+	// pos is where the attribute was written, for builtins.unsafeGetAttrPos.
+	// It is nil for an attribute a builtin constructed, whose source position
+	// there is no way to name.
+	pos *p.LexPosition
 }
 
 // NewSet returns an empty attribute set with room for n attributes.
@@ -179,13 +185,28 @@ func (s *AttrSet) Print(w *worker, recurse int) string {
 // finished, which is also when the names are put in order: checking here
 // instead would mean searching the set once per binding.
 func (s *AttrSet) Bind1(sym Sym, x *Expression) {
-	s.attrs = append(s.attrs, attr{sym, x})
+	s.attrs = append(s.attrs, attr{sym: sym, x: x})
 	s.sorted = false
 }
 
+// setPos records the source position of the attribute just bound under sym,
+// which is what builtins.unsafeGetAttrPos reads back.
+func (s *AttrSet) setPos(sym Sym, pos *p.LexPosition) {
+	if pos == nil {
+		return
+	}
+	for i := len(s.attrs) - 1; i >= 0; i-- {
+		if s.attrs[i].sym == sym {
+			s.attrs[i].pos = pos
+			return
+		}
+	}
+}
+
 // Bind adds an attribute under a path, creating the intermediate sets that
-// `a.b.c = v;` implies.
-func (s *AttrSet) Bind(w *worker, syms []Sym, x *Expression) {
+// `a.b.c = v;` implies. It returns the set the final name is bound in, so the
+// caller can note its position.
+func (s *AttrSet) Bind(w *worker, syms []Sym, x *Expression) *AttrSet {
 	last := len(syms) - 1
 	for i, sym := range syms[:last] {
 		y, ok := s.Get(sym)
@@ -204,6 +225,7 @@ func (s *AttrSet) Bind(w *worker, syms []Sym, x *Expression) {
 		s = val.Set()
 	}
 	s.Bind1(syms[last], x)
+	return s
 }
 
 // finishAll puts this set and the ones nested inside it in order, which is
@@ -295,7 +317,7 @@ func (s *AttrSet) Set(sym Sym, x *Expression) {
 			s.attrs[i].x = x
 			return
 		} else {
-			s.attrs = slices.Insert(s.attrs, i, attr{sym, x})
+			s.attrs = slices.Insert(s.attrs, i, attr{sym: sym, x: x})
 			return
 		}
 	}

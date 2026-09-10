@@ -31,6 +31,17 @@ func bConcatLists(w *worker, args ...*Expression) NixValue {
 	return ListValue(result)
 }
 
+// bConcatMap implements builtins.concatMap: concatLists (map f list).
+func bConcatMap(w *worker, args ...*Expression) NixValue {
+	f := assertLambda(w, args[0].Eval(w))
+	list := assertList(w, args[1].Eval(w))
+	result := make(NixList, 0, len(list))
+	for _, x := range list {
+		result = append(result, assertList(w, f.Apply(w, x).Eval(w))...)
+	}
+	return ListValue(result)
+}
+
 func bElem(w *worker, args ...*Expression) NixValue {
 	val := args[0].Eval(w)
 	for _, x := range assertList(w, args[1].Eval(w)) {

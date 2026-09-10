@@ -139,3 +139,51 @@ func bRemoveAttrs(w *worker, args ...*Expression) NixValue {
 	}
 	return SetValue(setOf(result))
 }
+
+// bMapAttrs implements builtins.mapAttrs: f applied to each attribute's name
+// and value. The applications are lazy, as Nix's are.
+func bMapAttrs(w *worker, args ...*Expression) NixValue {
+	f := assertLambda(w, args[0].Eval(w))
+	set := assertSet(w, args[1].Eval(w))
+	result := NewSet(set.Len())
+	for _, a := range set.attrs {
+		result.Bind1(a.sym, apply2(w, f, value(w, String(a.sym.String())), a.x))
+	}
+	return SetValue(result.finish(w))
+}
+
+// bZipAttrsWith implements builtins.zipAttrsWith: transpose a list of sets,
+// then apply f to each name and the list of its values across the sets.
+func bZipAttrsWith(w *worker, args ...*Expression) NixValue {
+	f := assertLambda(w, args[0].Eval(w))
+	list := assertList(w, args[1].Eval(w))
+
+	counts := map[Sym]int{}
+	order := make([]Sym, 0)
+	for _, x := range list {
+		for _, a := range assertSet(w, x.Eval(w)).attrs {
+			if _, ok := counts[a.sym]; !ok {
+				order = append(order, a.sym)
+			}
+			counts[a.sym]++
+		}
+	}
+	// Values for each name, in the order the sets appear in the list.
+	values := make(map[Sym]NixList, len(counts))
+	pos := make(map[Sym]int, len(counts))
+	for sym, n := range counts {
+		values[sym] = make(NixList, n)
+	}
+	for _, x := range list {
+		for _, a := range assertSet(w, x.Eval(w)).attrs {
+			values[a.sym][pos[a.sym]] = a.x
+			pos[a.sym]++
+		}
+	}
+
+	result := NewSet(len(counts))
+	for _, sym := range order {
+		result.Bind1(sym, apply2(w, f, value(w, String(sym.String())), value(w, ListValue(values[sym]))))
+	}
+	return SetValue(result.finish(w))
+}

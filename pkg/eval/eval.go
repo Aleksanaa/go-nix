@@ -291,7 +291,12 @@ func (x *Expression) evalBinds(w *worker, nt p.NodeType) {
 		case p.BindNode:
 			attrpath := scope.evalAttrPath(w, c.Nodes[0])
 			y := x.WithScoped(w, c.Nodes[1], scope)
-			set.Bind(w, attrpath, y.blamingAttr(attrpath[len(attrpath)-1]))
+			leaf := set.Bind(w, attrpath, y.blamingAttr(attrpath[len(attrpath)-1]))
+			// The position is the attribute's name, so unsafeGetAttrPos can
+			// point back at it.
+			if comps := c.Nodes[0].Nodes; len(comps) > 0 {
+				leaf.setPos(attrpath[len(attrpath)-1], x.scope().parser().NodePos(comps[len(comps)-1]))
+			}
 
 		case p.InheritNode:
 			// `inherit a;` is `a = a;` evaluated in the enclosing scope.
@@ -299,6 +304,7 @@ func (x *Expression) evalBinds(w *worker, nt p.NodeType) {
 				y := x.WithNode(w, id)
 				sym := x.scope().attrSym(w, id)
 				set.Bind1(sym, y.blamingAttr(sym))
+				set.setPos(sym, x.scope().parser().NodePos(id))
 			}
 
 		case p.InheritFromNode:
@@ -308,6 +314,7 @@ func (x *Expression) evalBinds(w *worker, nt p.NodeType) {
 			for _, id := range c.Nodes[1].Nodes {
 				sym := x.scope().attrSym(w, id)
 				set.Bind1(sym, from.selectAttr(w, sym).blamingAttr(sym))
+				set.setPos(sym, x.scope().parser().NodePos(id))
 			}
 		}
 	}

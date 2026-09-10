@@ -122,6 +122,24 @@ func Exists(p string) bool {
 	return err == nil
 }
 
+// FileType is the type of a path, spelled the way builtins.readFileType and
+// builtins.readDir report it: "regular", "directory", "symlink" or "unknown".
+func FileType(p string) string {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return "unknown"
+	}
+	switch {
+	case fi.Mode().IsRegular():
+		return "regular"
+	case fi.IsDir():
+		return "directory"
+	case fi.Mode()&os.ModeSymlink != 0:
+		return "symlink"
+	}
+	return "unknown"
+}
+
 // IsDir reports whether a path exists and is a directory, following symlinks
 // the way import does when it decides whether to open default.nix.
 func IsDir(p string) bool {

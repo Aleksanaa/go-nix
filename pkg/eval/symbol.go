@@ -80,6 +80,16 @@ var (
 	symDrvAttrs        = Intern("drvAttrs")
 	symPath            = Intern("path")
 	symFilter          = Intern("filter")
+	symAllOutputs      = Intern("allOutputs")
+	symFile            = Intern("file")
+	symLine            = Intern("line")
+	symColumn          = Intern("column")
+	symStartSet        = Intern("startSet")
+	symOperator        = Intern("operator")
+	symKey             = Intern("key")
+	symHash            = Intern("hash")
+	symHashAlgo        = Intern("hashAlgo")
+	symToHashFormat    = Intern("toHashFormat")
 )
 
 func Intern(name string) Sym {
