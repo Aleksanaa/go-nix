@@ -1,16 +1,19 @@
 package eval
 
 import (
-	"fmt"
+	"strconv"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
-// printInt renders an integer the way Nix does.
-func printInt(i int64) string { return fmt.Sprintf("%d", i) }
+// printInt renders an integer the way Nix does. It is worth going through
+// strconv rather than fmt: toString on a number is common enough in Nix code
+// that formatting showed up in the profile of a workload that only builds
+// attribute names.
+func printInt(i int64) string { return strconv.FormatInt(i, 10) }
 
 // printFloat matches the %.6g Nix uses to display floats.
-func printFloat(f float64) string { return fmt.Sprintf("%.6g", f) }
+func printFloat(f float64) string { return strconv.FormatFloat(f, 'g', 6, 64) }
 
 // NixNumber is what arithmetic works on. The operand types are known where
 // arith is called, so this is one of the places a type parameter costs

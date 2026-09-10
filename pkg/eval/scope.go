@@ -50,21 +50,48 @@ func (s *Scope) single() *Expression {
 	return (*Expression)(s.bound)
 }
 
+// scopeSlabSize is how many scopes are allocated at a time. A scope is only
+// ever reached from the one nested inside it, so a block of them is retained
+// exactly as long as its liveliest member — the same trade as exprSlabSize,
+// but a cheaper one, since a scope chain dies together.
+const scopeSlabSize = 256
+
+// scopeSlab is the block currently being handed out. Evaluation is
+// single-goroutine, like the symbol table and the evaluation stack.
+var scopeSlab []Scope
+
+// newScope returns a zeroed scope from the block being handed out.
+func newScope() *Scope {
+	if scopeSlabSize <= 1 {
+		return new(Scope)
+	}
+	if len(scopeSlab) == 0 {
+		scopeSlab = make([]Scope, scopeSlabSize)
+	}
+	s := &scopeSlab[0]
+	scopeSlab = scopeSlab[1:]
+	return s
+}
+
 // Subscope nests a scope binding a set of names.
 func (scope *Scope) Subscope(binds NixSet, lowPrio bool) *Scope {
-	return &Scope{bound: unsafe.Pointer(binds), LowPrio: lowPrio, Parent: scope, file: scope.file}
+	s := newScope()
+	*s = Scope{bound: unsafe.Pointer(binds), LowPrio: lowPrio, Parent: scope, file: scope.file}
+	return s
 }
 
 // Subscope1 nests a scope binding a single name.
 func (scope *Scope) Subscope1(sym Sym, x *Expression) *Scope {
-	return &Scope{sym: sym, bound: unsafe.Pointer(x), Parent: scope, file: scope.file}
+	s := newScope()
+	*s = Scope{sym: sym, bound: unsafe.Pointer(x), Parent: scope, file: scope.file}
+	return s
 }
 
 // ForFile returns the scope bound to a parsed file, which is how the root
 // scope of an evaluation is made from the shared DefaultScope.
 func (scope *Scope) ForFile(pr *p.Parser) *Scope {
 	s := *scope
-	s.file = &file{parser: pr}
+	s.file = newFile(pr)
 	return &s
 }
 
@@ -199,10 +226,26 @@ func (scope *Scope) evalNode(n *p.Node) NixValue {
 // evalAttrPath evaluates the names of an attribute path, such as the
 // `a."b".` of a binding or a selection. The path node is passed in rather
 // than wrapped in an expression, since nothing needs it afterwards.
+//
+// A path of plain identifiers names the same attributes however often it is
+// reached, so it is worked out once and kept against the node — which matters
+// because a selection inside a loop is evaluated once per turn, and interning
+// its components again each time was the largest single cost in the evaluator
+// after allocation. A path with an interpolation in it has to be evaluated
+// every time, and is not kept.
 func (scope *Scope) evalAttrPath(path *p.Node) []Sym {
+	e := scope.file.static.get(path.ID)
+	if e.attrs != nil {
+		return e.attrs
+	}
 	attrs := make([]Sym, len(path.Nodes))
+	static := true
 	for i, c := range path.Nodes {
 		attrs[i] = scope.attrSym(c)
+		static = static && c.Type == p.IDNode
+	}
+	if static {
+		e.attrs = attrs
 	}
 	return attrs
 }

@@ -10,16 +10,11 @@ import (
 // of an identifier — do not change between evaluations, but a node inside a
 // function body is evaluated once per call. This file caches them.
 //
-// The cache is a sparse array keyed by the node's dense ID, in fixed-size
-// pages, so a lookup is two array indexes and no hashing. Only the pages that
-// are touched are allocated, which matters when a large file is parsed and a
-// small part of it evaluated. The design is taken from the TypeScript Go
-// compiler's core.PagedLinkStore.
-const (
-	staticPageShift = 8
-	staticPageSize  = 1 << staticPageShift
-	staticPageMask  = staticPageSize - 1
-)
+// The cache is a flat array keyed by the node's dense ID, so a lookup is one
+// bounds check and an index, with no hashing and no indirection. The parser
+// says how many nodes it made, so the array is the right size from the start;
+// it was pages of a sparse array before, and reaching through the page table
+// was 11% of the evaluator on a call-heavy workload.
 
 // static is what is known about a node without evaluating it in a scope.
 type static struct {
@@ -39,6 +34,9 @@ type static struct {
 	// slot is one more than the position of the name in the scope hops leads
 	// to, or zero when that scope binds a single name.
 	slot int32
+	// attrs is what an attribute path of plain identifiers names, which does
+	// not change between evaluations.
+	attrs []Sym
 	// attrSym is the name of the attribute whose value this node is, for the
 	// backtrace frame that says which attribute failed.
 	attrSym Sym
@@ -52,23 +50,21 @@ type static struct {
 }
 
 type staticStore struct {
-	pages []*[staticPageSize]static
+	entries []static
 }
 
-// get returns the entry for a node, creating its page on first use.
+// get returns the entry for a node.
 func (s *staticStore) get(id uint32) *static {
-	page := int(id >> staticPageShift)
-	if page >= len(s.pages) {
-		// Grow rounds the capacity up to a size class, so the pages of a file
-		// parsed all at once cost one allocation between them.
-		s.pages = slices.Grow(s.pages, page+1-len(s.pages))[:page+1]
+	if int(id) >= len(s.entries) {
+		s.grow(id)
 	}
-	pg := s.pages[page]
-	if pg == nil {
-		pg = new([staticPageSize]static)
-		s.pages[page] = pg
-	}
-	return &pg[id&staticPageMask]
+	return &s.entries[id]
+}
+
+// grow makes room for a node the array does not cover yet, which happens once
+// per file: the first node evaluated sizes it for the whole parse.
+func (s *staticStore) grow(id uint32) {
+	s.entries = slices.Grow(s.entries, int(id)+1-len(s.entries))[:id+1]
 }
 
 // file is the state an evaluation keeps per parsed file: the source itself and
@@ -78,6 +74,12 @@ func (s *staticStore) get(id uint32) *static {
 type file struct {
 	parser *p.Parser
 	static staticStore
+}
+
+// newFile binds a parse to the facts worked out about its nodes. The parser
+// counted them, so the array they go in is allocated once, at the right size.
+func newFile(pr *p.Parser) *file {
+	return &file{parser: pr, static: staticStore{entries: make([]static, pr.NodeCount())}}
 }
 
 // literal returns the value of a literal node, computing it at most once.

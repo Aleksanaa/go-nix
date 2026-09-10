@@ -132,7 +132,7 @@ func (x *Expression) setThunk(scope *Scope, n *p.Node) {
 // trade for an evaluator meant to be pointed at large expressions. Workloads
 // whose thunks nearly all die young — see examples/hanoi-calls.nix — get the
 // speed without the memory, so this is worth revisiting per use.
-const exprSlabSize = 1
+const exprSlabSize = 256
 
 // exprSlab is the block currently being handed out. Evaluation is
 // single-goroutine, like the symbol table and the evaluation stack.
@@ -195,7 +195,11 @@ func (x *Expression) blamingAttr(sym Sym) *Expression {
 		return x
 	}
 	if n := x.node(); n != nil {
-		x.scope().file.static.get(n.ID).attrSym = sym
+		// The same node is bound to the same name on every evaluation, so this
+		// is a write to a page that is already right almost every time.
+		if e := x.scope().file.static.get(n.ID); e.attrSym != sym {
+			e.attrSym = sym
+		}
 	}
 	return x
 }

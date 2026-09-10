@@ -29,6 +29,11 @@ type lambdaInfo struct {
 	Body *p.Node
 	// Node is the function expression itself, which backtraces point at.
 	Node *p.Node
+
+	// next is the function this one's body is, for a curried definition like
+	// `a: b: …`. Walking that chain is how a call binds several arguments at
+	// once, so it is linked up on first use rather than looked up per call.
+	next *lambdaInfo
 }
 
 // NixExprLambda is a closure: a function written in Nix, together with the
@@ -156,52 +161,83 @@ func (pp *NixPartialPrimop) Apply(arg *Expression) *Expression {
 	return newPartial(pp.Primop, args, pp.N+1)
 }
 
-// apply2 applies f to two arguments at once.
+// maxSpine is how many arguments of one call are entered together. Beyond
+// this the rest are applied one at a time, which is what happened to every
+// argument before this existed.
+const maxSpine = 8
+
+// applySpine applies a chain of arguments to a function, entering as many
+// plain one-name functions as it can in a single step.
 //
-// A function written as `a: b: body` — the shape a curried call reaches, and
-// the one every builtin that takes a callback expects — is then entered once:
-// the closure that would stand for the function in between the two arguments
-// is never built, and neither is the expression that would force it.
-// Anything else falls back to applying one argument after the other.
-func apply2(f NixLambda, a, b *Expression) *Expression {
-	if lam, ok := f.(*NixExprLambda); ok && !lam.HasFormal && lam.Body.Type == p.FunctionNode {
-		if inner := lam.Scope.lambdaInfo(lam.Body); !inner.HasFormal {
-			scope := lam.Scope.Subscope1(lam.Arg, a).Subscope1(inner.Arg, b)
-			return newScoped(scope, inner.Body).blaming(blameCall)
+// `f a b c` is three applications, and taking them one at a time allocates a
+// scope for each and a closure for each function in between. Here the scopes
+// of one call are allocated together — each already keeps the one before it
+// alive, so nothing is retained that was not before — and the closures in
+// between are never built at all. It is what Nix's call loop does, and on a
+// four-argument recursion it is the difference between five allocations per
+// call and two.
+//
+// It returns the expression standing for the result, or nil when it has
+// pointed x at the body to carry on with in place.
+func applySpine(x *Expression, fn NixLambda, args []*Expression) *Expression {
+	for {
+		lam, ok := fn.(*NixExprLambda)
+		if !ok || lam.HasFormal {
+			// A builtin, or a function matching a formal argument set: those
+			// take one argument at a time.
+			y := fn.Apply(args[0])
+			if len(args) == 1 {
+				return y
+			}
+			fn, args = assertLambda(y.Eval()), args[1:]
+			continue
 		}
+
+		// How far the run of plain one-name functions goes, and so how many
+		// arguments this step binds.
+		var infos [maxSpine]*lambdaInfo
+		infos[0] = lam.lambdaInfo
+		n := 1
+		for n < len(args) && infos[n-1].Body.Type == p.FunctionNode {
+			prev := infos[n-1]
+			if prev.next == nil {
+				prev.next = lam.Scope.lambdaInfo(prev.Body)
+			}
+			if prev.next.HasFormal {
+				break
+			}
+			infos[n], n = prev.next, n+1
+		}
+
+		parent := bindArgs(lam.Scope, infos[:n], args[:n])
+		body := infos[n-1].Body
+		if args = args[n:]; len(args) == 0 {
+			// The frame points at the function, which says more than its body
+			// would; continuing in place saves the thunk for the body too.
+			x.continueIn(body, parent, blameCall)
+			return nil
+		}
+		// More arguments than this run of functions takes, so the body has to
+		// be evaluated to find the next one.
+		var y Expression
+		y.setThunk(parent, body)
+		y.blame = blameCall
+		fn = assertLambda(y.Eval())
 	}
-	return assertLambda(f.Apply(a).Eval()).Apply(b)
 }
 
-// applyIn enters a function in the calling expression itself: binding the
-// argument makes a scope, and the body is evaluated in place of the call. It
-// reports whether it could — a builtin, or a function taking a formal argument
-// set, still needs an expression of its own.
-func applyIn(x *Expression, f NixLambda, arg *Expression) bool {
-	lam, ok := f.(*NixExprLambda)
-	if !ok || lam.HasFormal {
-		return false
+// apply2 applies f to two arguments, for the builtins that take a callback.
+func apply2(f NixLambda, a, b *Expression) *Expression {
+	var x Expression
+	args := [2]*Expression{a, b}
+	if y := applySpine(&x, f, args[:]); y != nil {
+		return y
 	}
-	// The frame points at the function, which says more than its body would.
-	x.continueIn(lam.Body, lam.Scope.Subscope1(lam.Arg, arg), blameCall)
-	return true
-}
-
-// applyIn2 is applyIn for `f a b`, where the function is written `a: b: body`.
-// Both arguments are bound before the body is entered, so the closure that
-// would stand for the function in between them is never built.
-func applyIn2(x *Expression, f NixLambda, a, b *Expression) bool {
-	lam, ok := f.(*NixExprLambda)
-	if !ok || lam.HasFormal || lam.Body.Type != p.FunctionNode {
-		return false
-	}
-	inner := lam.Scope.lambdaInfo(lam.Body)
-	if inner.HasFormal {
-		return false
-	}
-	scope := lam.Scope.Subscope1(lam.Arg, a).Subscope1(inner.Arg, b)
-	x.continueIn(inner.Body, scope, blameCall)
-	return true
+	// applySpine pointed the scratch expression at the body; give it one of
+	// its own, since the caller keeps it.
+	y := newExpr()
+	*y = x
+	return y
 }
 
 // partialValue is a partial application together with the expression that
@@ -221,4 +257,26 @@ func newPartial(op *NixPrimop, args [maxPrimopArgs]*Expression, n int) *Expressi
 // applyToValue applies a function to a value the evaluator has in hand.
 func applyToValue(f NixLambda, v NixValue) *Expression {
 	return f.Apply(value(v))
+}
+
+// bindArgs binds a call's arguments, one scope per argument, and returns the
+// innermost. The scopes of one call are allocated together: each keeps the one
+// before it alive anyway, so a block retains nothing extra, and a call of
+// several arguments costs one allocation rather than one per argument.
+func bindArgs(outer *Scope, infos []*lambdaInfo, args []*Expression) *Scope {
+	if len(infos) == 1 {
+		// One argument is the common case by far, and an object of its own
+		// size class is cheaper to get than a slice.
+		return outer.Subscope1(infos[0].Arg, args[0])
+	}
+	scopes := make([]Scope, len(infos))
+	parent := outer
+	for i := range scopes {
+		scopes[i] = Scope{
+			sym: infos[i].Arg, bound: unsafe.Pointer(args[i]),
+			Parent: parent, file: outer.file,
+		}
+		parent = &scopes[i]
+	}
+	return parent
 }

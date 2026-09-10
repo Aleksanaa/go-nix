@@ -162,22 +162,23 @@ func (x *Expression) resolve() *Expression {
 		x.setValue(x.evalFunction())
 
 	case p.ApplyNode:
-		// `f a b` parses as `(f a) b` and is applied in one step, so that the
-		// function value in between the two arguments is never built. A longer
-		// chain is entered two arguments at a time.
-		if inner := n.Nodes[0]; inner.Type == p.ApplyNode {
-			fn := assertLambda(x.evalNode(inner.Nodes[0]))
-			a, b := x.thunkFor(inner.Nodes[1]), x.thunkFor(n.Nodes[1])
-			if applyIn2(x, fn, a, b) {
-				break
-			}
-			return apply2(fn, a, b)
+		// `f a b c` parses as `((f a) b) c`; the whole chain is gathered so
+		// that the call is entered once. See applySpine.
+		var args [maxSpine]*p.Node
+		head, k := n, 0
+		for head.Type == p.ApplyNode && k < maxSpine {
+			args[k] = head.Nodes[1]
+			head = head.Nodes[0]
+			k++
 		}
-		fn := assertLambda(x.evalNode(n.Nodes[0]))
-		arg := x.thunkFor(n.Nodes[1])
-		if !applyIn(x, fn, arg) {
-			return fn.Apply(arg)
+		fn := assertLambda(x.evalNode(head))
+		// The arguments were gathered from the outside in, so they come out
+		// in reverse.
+		var thunks [maxSpine]*Expression
+		for i := range k {
+			thunks[i] = x.thunkFor(args[k-1-i])
 		}
+		return applySpine(x, fn, thunks[:k])
 
 	case p.OpNegateNode, p.OpNotNode, p.OpQuestionNode:
 		x.setValue(x.evalUnaryOp(nt))
