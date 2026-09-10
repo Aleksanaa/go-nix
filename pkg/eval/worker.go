@@ -17,6 +17,11 @@ type worker struct {
 	// told apart from the ones waiting on it.
 	id uint32
 
+	// budget is how many workers this one may still split its work across.
+	// Halving it on every fork is what keeps a recursion forking near its top
+	// and running whole further down; see Expression.operands.
+	budget int
+
 	// wait is what this worker is blocked on, when it is. It is read by other
 	// workers looking for a cycle among the ones waiting; see deadlock.go.
 	wait waitState
@@ -125,14 +130,18 @@ func (w *worker) enterFile(f *file) {
 	w.memoFile, w.memo = f, m
 }
 
-// parallel says whether more than one worker may be evaluating. It is settled
-// before an evaluation starts and does not change while one runs.
+// parallel says whether more than one worker may be evaluating. It starts
+// false and is turned on, once, by goParallel — at the moment a fork is about
+// to happen and not before.
 //
 // It exists because the claim on a thunk is only worth synchronising when
 // there is somebody to synchronise with. Publishing a value with an atomic
 // store costs about a tenth of a run — on amd64 it is a locked exchange, and
 // it happens once per force — and buys nothing at all while one goroutine is
 // doing everything. With one worker the claim word is touched plainly; with
-// several, every touch is atomic, so all of them agree. Mixing the two is safe
-// only because the mode is fixed for the whole evaluation.
+// several, every touch is atomic, so all of them agree.
+//
+// Mixing the two is safe because the switch happens while there is still only
+// one goroutine, and starting one orders everything written before it against
+// everything the new one reads. See goParallel.
 var parallel bool

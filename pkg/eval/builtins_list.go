@@ -53,9 +53,27 @@ func bElemAt(w *worker, args ...*Expression) NixValue {
 func bFilter(w *worker, args ...*Expression) NixValue {
 	f := assertLambda(w, args[0].Eval(w))
 	list := assertList(w, args[1].Eval(w))
+	// The predicate is asked about every element, so the questions can be put
+	// in advance and answered across the pool. Only in parallel: building them
+	// all up front costs an expression each, which is what the loop below
+	// avoids when it is the only thing running.
+	var asked []*Expression
+	if len(list) >= forkMinItems && goParallel() {
+		asked = make([]*Expression, len(list))
+		for i, x := range list {
+			asked[i] = f.Apply(w, x)
+		}
+		forceAll(w, asked)
+	}
 	result := make(NixList, 0, len(list))
-	for _, x := range list {
-		if assertBool(w, f.Apply(w, x).Eval(w)) {
+	for i, x := range list {
+		var y *Expression
+		if asked != nil {
+			y = asked[i]
+		} else {
+			y = f.Apply(w, x)
+		}
+		if assertBool(w, y.Eval(w)) {
 			result = append(result, x)
 		}
 	}

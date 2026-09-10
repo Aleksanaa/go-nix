@@ -105,6 +105,8 @@ func bIntersectAttrs(w *worker, args ...*Expression) NixValue {
 // the first occurrence of a name wins.
 func bListToAttrs(w *worker, args ...*Expression) NixValue {
 	list := assertList(w, args[0].Eval(w))
+	// Every element is forced below, to read a name out of it.
+	forceAll(w, list)
 	nameSym, valueSym := Intern("name"), symValue
 	result := NewSet(len(list))
 	for _, x := range list {

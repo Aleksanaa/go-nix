@@ -41,6 +41,10 @@ type static struct {
 	// name settled by the pass is never written again — the store is guarded
 	// by a load, so the ordinary case is a read.
 	attrSym atomic.Int32
+	// recursive marks an application that calls the function it is written
+	// inside. It is what decides whether the work is worth handing to another
+	// worker; see preparer.selfCalls.
+	recursive bool
 	// bad is why the pass could not make sense of this node, raised if and
 	// when the node is evaluated so that the failure keeps its backtrace.
 	bad string

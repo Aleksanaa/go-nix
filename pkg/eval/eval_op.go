@@ -72,7 +72,14 @@ func (x *Expression) evalBinaryOp(w *worker, nt p.NodeType) NixValue {
 		return Bool(assertBool(w, x.operand(w, 1)))
 	}
 
-	lhs, rhs := x.operand(w, 0), x.operand(w, 1)
+	// Both sides are forced, so where there is a worker to spare they can be
+	// forced at once; see operandsForked.
+	var lhs, rhs NixValue
+	if forkOps && w.budget >= 2 && goParallel() {
+		lhs, rhs = x.operandsForked(w)
+	} else {
+		lhs, rhs = x.operand(w, 0), x.operand(w, 1)
+	}
 	switch nt {
 	case p.OpAddNode:
 		return Add(w, lhs, rhs)
@@ -104,4 +111,52 @@ func (x *Expression) evalBinaryOp(w *worker, nt p.NodeType) NixValue {
 	default:
 		return Arith(w, lhs, rhs, nt)
 	}
+}
+
+// operands evaluates both sides of an operator that forces both, on two
+// workers where there is one to spare.
+//
+// This is the only fork point inside the evaluator rather than inside a
+// builtin, and it is the one a recursion needs: `f (k - 1) + f (k - 1)` is a
+// tree of independent work that no list-shaped builtin ever sees. What keeps
+// it from forking all the way down to the leaves — where handing the work over
+// costs far more than doing it — is the budget: a worker splits what it has
+// with the side it gives away, so the forking stops a few levels in and the
+// subtrees run whole.
+// operandsForked is operands where a worker is to be spared. It is out of
+// line because a function that starts a goroutine cannot be inlined, and
+// operands is on the path of every operator in every evaluation.
+func (x *Expression) operandsForked(w *worker) (lhs, rhs NixValue) {
+	rhsNode := x.node().Nodes[1]
+	// The node type is in hand and settles most operands — a name, a literal —
+	// without reaching for what the pass worked out about them.
+	if rhsNode.Type != p.ApplyNode || !x.scope().file.static.get(rhsNode.ID).recursive {
+		return x.operand(w, 0), x.operand(w, 1)
+	}
+	y := x.WithNode(w, rhsNode)
+	give := w.budget / 2
+	w.budget -= give
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cw := takeWorker()
+		defer dropWorker(cw)
+		cw.budget = give
+		// A failure here is not this goroutine's to report: the value is
+		// forced again below, in order, and fails there with its backtrace.
+		catching(func() struct{} { y.Eval(cw); return struct{}{} })
+	}()
+	// Waited for even when the left side fails, so that no work outlives the
+	// evaluation that asked for it.
+	defer func() {
+		<-done
+		w.budget += give
+	}()
+
+	// Receiving twice from a closed channel is harmless, so the defer above
+	// simply finds the wait already done.
+	lhs = x.operand(w, 0)
+	<-done
+	return lhs, y.Eval(w)
 }
