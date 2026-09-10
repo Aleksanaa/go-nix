@@ -195,6 +195,12 @@ func (v NixValue) Print(w *worker, recurse int) string {
 // Compare implements Nix equality: structural for data, always false for
 // functions.
 func (v NixValue) Compare(w *worker, other NixValue) bool {
+	// A set or a list that is the same object as the other is equal to it,
+	// as Nix's eqValues reports before comparing structurally. This is what
+	// lets a set compare equal to itself even when it holds a function.
+	if v.kind == other.kind && (v.kind == KindSet || v.kind == KindList) && v.ptr == other.ptr && v.num == other.num {
+		return true
+	}
 	switch v.kind {
 	case KindNull:
 		return other.kind == KindNull

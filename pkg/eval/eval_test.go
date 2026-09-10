@@ -87,7 +87,13 @@ func TestEval(t *testing.T) {
 		{`2.47207e+17 == 247207427047107403`, `false`},
 		{`1 == 1.0`, `true`},
 		{`[[1][2 2]] ++ [[3 3 3]] == [[1][2 2][3 3 3]]`, `true`},
-		{`let s = { a.b = (a: a); }; in s == s`, `false`},
+		// A set compares equal to itself even when it holds a function, as
+		// Nix's eqValues reports before comparing structurally.
+		{`let s = { a.b = (a: a); }; in s == s`, `true`},
+		// Two distinct sets with the same structure do not, because the
+		// function inside them is incomparable.
+		{`let s = { a = (a: a); }; t = { a = (a: a); }; in s == t`, `false`},
+		{`let f = a: a; in f == f`, `false`},
 		{`{ a = 1; } == { b = 1; }`, `false`},
 
 		// Laziness: the unused parts must never be evaluated.

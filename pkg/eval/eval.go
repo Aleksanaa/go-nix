@@ -289,6 +289,11 @@ func (x *Expression) evalBinds(w *worker, nt p.NodeType) {
 			w.throwf(ErrEval, "unsupported binding: %v", c.Type)
 
 		case p.BindNode:
+			// A dynamic component that evaluates to null skips the whole
+			// binding, which is how `{ ${null} = 1; }` binds nothing.
+			if scope.attrPathNull(w, c.Nodes[0]) {
+				continue
+			}
 			attrpath := scope.evalAttrPath(w, c.Nodes[0])
 			y := x.WithScoped(w, c.Nodes[1], scope)
 			leaf := set.Bind(w, attrpath, y.blamingAttr(attrpath[len(attrpath)-1]))

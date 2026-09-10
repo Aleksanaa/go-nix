@@ -230,6 +230,18 @@ func (scope *Scope) evalAttrPath(w *worker, path *p.Node) []Sym {
 	return attrs
 }
 
+// attrPathNull reports whether any dynamic component of an attribute path
+// evaluates to null, which is what skips a binding in Nix: `{ ${null} = 1; }`
+// binds nothing.
+func (scope *Scope) attrPathNull(w *worker, path *p.Node) bool {
+	for _, c := range path.Nodes {
+		if c.Type == p.InterpNode && scope.evalNode(w, c.Nodes[0]).Kind() == KindNull {
+			return true
+		}
+	}
+	return false
+}
+
 // attrSym evaluates one component of an attribute path to its interned name.
 // A plain identifier is interned once and kept against the node; a computed
 // one has to be evaluated every time.
