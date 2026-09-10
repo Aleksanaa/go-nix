@@ -49,7 +49,7 @@ func stringSym(s string, sym Sym) *NixString {
 // refers to, and the values interpolated from the evaluator itself — such as
 // the Nix version — that make it non-reproducible.
 type stringExtra struct {
-	Context    []*Derivation
+	Context    []stringContext
 	Impurities map[string]string
 }
 

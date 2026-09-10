@@ -96,6 +96,10 @@ var builtins = map[string]builtin{
 	// Serialisation.
 	"fromJSON": {1, bFromJSON, "Parse a JSON string into a Nix value.", false},
 	"toJSON":   {1, bToJSON, "Render a value as JSON.", false},
+
+	// Derivations.
+	"derivation":       {1, bDerivation, "Build a derivation from an attribute set.", true},
+	"derivationStrict": {1, bDerivationStrict, "Build a derivation, returning only its paths.", true},
 }
 
 // globals are the non-function names Nix predefines.
