@@ -90,6 +90,7 @@ var (
 	symHash            = Intern("hash")
 	symHashAlgo        = Intern("hashAlgo")
 	symToHashFormat    = Intern("toHashFormat")
+	symFunctor         = Intern("__functor")
 )
 
 func Intern(name string) Sym {

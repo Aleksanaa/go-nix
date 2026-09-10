@@ -220,6 +220,52 @@ func TestEvalErrors(t *testing.T) {
 	}
 }
 
+// TestFunctor covers sets made callable through a __functor attribute: applying
+// such a set calls its __functor with the set itself prepended to the arguments.
+func TestFunctor(t *testing.T) {
+	for _, test := range [][2]string{
+		{`{ __functor = self: x: x * 2; } 21`, `42`},
+		{`{ __functor = self: x: y: x + y; } 1 2`, `3`},
+		// self is the set itself, so it can reach its other attributes.
+		{`{ a = 1; __functor = self: x: self.a + x; } 2`, `3`},
+		{`rec { a = 2; __functor = self: x: self.a + x; } 1`, `3`},
+		{`let f = { a = 10; __functor = self: x: self.a + x; }; in builtins.map f [ 1 2 ]`, `[ 11 12 ]`},
+		{`let f = { __functor = self: x: y: x + y; }; in (f 1) 2`, `3`},
+		{`let f = { __functor = self: x: x * 2; }; in [ (f 21) (f 3) ]`, `[ 42 6 ]`},
+		// Unused attributes of the functor set must stay lazy.
+		{`{ a = throw "boom"; __functor = self: x: x; } 1`, `1`},
+		// A functor set is still a set, not a lambda.
+		{`builtins.typeOf { __functor = self: x: x; }`, `"set"`},
+	} {
+		got, err := evalPrint(t, test[0])
+		if err != nil {
+			t.Errorf("%s\nunexpected error: %v", test[0], err)
+			continue
+		}
+		if got != test[1] {
+			t.Errorf("%s\n got: %s\nwant: %s", test[0], got, test[1])
+		}
+	}
+}
+
+func TestFunctorErrors(t *testing.T) {
+	for _, test := range [][2]string{
+		{`{ __functor = 1; } 1`, `value of the __functor attribute is an integer while a function was expected`},
+		{`{ __functor = "x"; } 1`, `value of the __functor attribute is a string while a function was expected`},
+		{`{ __functor = null; } 1`, `value of the __functor attribute is null while a function was expected`},
+		{`{ a = 1; } 1`, `value is a set while a function was expected`},
+	} {
+		_, err := evalPrint(t, test[0])
+		if err == nil {
+			t.Errorf("%s\nexpected error %q, got none", test[0], test[1])
+			continue
+		}
+		if !strings.Contains(err.Error(), test[1]) {
+			t.Errorf("%s\n got: %v\nwant it to contain: %s", test[0], err, test[1])
+		}
+	}
+}
+
 // TestErrorTrace checks that an error carries a position and the chain of
 // evaluations that led to it.
 func TestErrorTrace(t *testing.T) {

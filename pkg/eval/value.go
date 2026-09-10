@@ -314,10 +314,22 @@ func assertString(w *worker, val NixValue) *NixString {
 }
 
 func assertLambda(w *worker, val NixValue) NixLambda {
-	if !val.IsLambda() {
-		w.throwf(ErrType, "value is %s while a function was expected", anTypeName(val))
+	if val.IsLambda() {
+		return val.Lambda()
 	}
-	return val.Lambda()
+	// A set with a __functor attribute is callable: applying it calls the
+	// __functor with the set itself prepended to the arguments.
+	if val.Kind() == KindSet {
+		if x, ok := val.Set().Get(symFunctor); ok {
+			fn := x.Eval(w)
+			if !fn.IsLambda() {
+				w.throwf(ErrType, "value of the __functor attribute is %s while a function was expected", anTypeName(fn))
+			}
+			return &functorLambda{self: val, fn: fn.Lambda()}
+		}
+	}
+	w.throwf(ErrType, "value is %s while a function was expected", anTypeName(val))
+	return nil
 }
 
 // CompareOrder orders two values as Nix's relational operators do: numbers

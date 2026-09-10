@@ -14,6 +14,17 @@ type NixLambda interface {
 	Apply(w *worker, arg *Expression) *Expression
 }
 
+// functorLambda is a set used as a function through its __functor attribute.
+// Applying it calls __functor with the set prepended to the arguments.
+type functorLambda struct {
+	self NixValue
+	fn   NixLambda
+}
+
+func (f *functorLambda) Apply(w *worker, arg *Expression) *Expression {
+	return apply2(w, f.fn, value(w, f.self), arg)
+}
+
 // lambdaInfo is everything about a function that its syntax decides. It does
 // not depend on the scope the function was created in, so it is worked out
 // once per node and shared by every closure made from that node.
