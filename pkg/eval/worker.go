@@ -1,5 +1,7 @@
 package eval
 
+import "sync/atomic"
+
 // A worker is the state an evaluation keeps that belongs to whoever is doing
 // the evaluating rather than to the expressions being evaluated: the stack a
 // backtrace is read from, and the blocks new expressions and scopes are handed
@@ -12,6 +14,11 @@ package eval
 // to find this state, which is the first thing standing between here and
 // forcing thunks in parallel. See PLAN.md, phase D.
 type worker struct {
+	// id names this worker among all that are evaluating at once. It is what
+	// a thunk records when it is claimed, so that the worker holding it can be
+	// told apart from the ones waiting on it.
+	id uint32
+
 	// stack holds the expressions currently being forced, innermost last. It
 	// is what an error is annotated from: throwf reads the position and the
 	// backtrace off it at the point of failure, so that unwinding stays a
@@ -48,7 +55,21 @@ type worker struct {
 // w is the worker every evaluation runs on. Phase D replaces it with one per
 // goroutine, threaded rather than named; until then the indirection is the
 // whole of the change, and is measured.
-var mainWorker = &worker{}
+var mainWorker = newWorker()
+
+// workerIDs hands out ids to workers, so that a thunk's claim names its owner
+// unambiguously. Zero is reserved for "unclaimed".
+var workerIDs atomic.Uint32
+
+// newWorker makes a worker with an id of its own. The id is what a thunk
+// records when the worker claims it, so it must never be zero.
+func newWorker() *worker {
+	id := workerIDs.Add(1)
+	if id == 0 || id == stateForced {
+		panic("eval: ran out of worker ids")
+	}
+	return &worker{id: id}
+}
 
 // newExpr returns a zeroed expression from the block being handed out.
 func (w *worker) newExpr() *Expression {
@@ -102,3 +123,15 @@ func (w *worker) enterFile(f *file) {
 	}
 	w.memoFile, w.memo = f, m
 }
+
+// parallel says whether more than one worker may be evaluating. It is settled
+// before an evaluation starts and does not change while one runs.
+//
+// It exists because the claim on a thunk is only worth synchronising when
+// there is somebody to synchronise with. Publishing a value with an atomic
+// store costs about a tenth of a run — on amd64 it is a locked exchange, and
+// it happens once per force — and buys nothing at all while one goroutine is
+// doing everything. With one worker the claim word is touched plainly; with
+// several, every touch is atomic, so all of them agree. Mixing the two is safe
+// only because the mode is fixed for the whole evaluation.
+var parallel bool

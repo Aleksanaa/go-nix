@@ -23,7 +23,7 @@ func TestWorkerHoldsItsOwnState(t *testing.T) {
 	}
 	mainBefore := mainWorker.exprs
 
-	other := &worker{}
+	other := newWorker()
 	val, err := catching(func() NixValue { return delay(other, DefaultScope, pr).Eval(other) })
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func TestWorkerHoldsItsOwnState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	third := &worker{}
+	third := newWorker()
 	if _, err := catching(func() NixValue {
 		return delay(third, DefaultScope, badpr).Eval(third)
 	}); err == nil {
@@ -77,6 +77,7 @@ func sameBlock(a, b []Expression) bool {
 // name, whose symbol the pass worked out in advance, and `"key${toString n}"`
 // is a name no pass could know, interned as it is evaluated.
 func TestConcurrentEvaluationSharesTheFile(t *testing.T) {
+	evaluatingInParallel(t)
 	pr, err := p.ParseString(`let
 		mk = n: { "key${toString n}" = n; "common" = "same"; };
 	in builtins.map mk [ 1 2 3 ]`)
@@ -115,7 +116,7 @@ func TestConcurrentEvaluationSharesTheFile(t *testing.T) {
 // evalShared evaluates root in the shared file f on a fresh worker, returning
 // its full rendering.
 func evalShared(f *file, root *p.Node) (string, error) {
-	w := &worker{}
+	w := newWorker()
 	scope := *DefaultScope
 	scope.file = f
 	x := w.newExpr()
@@ -126,3 +127,98 @@ func evalShared(f *file, root *p.Node) (string, error) {
 	}
 	return catching(func() string { return val.Print(w, -1) })
 }
+
+// TestConcurrentForceSharesThunks is the milestone of phase D3: several
+// workers force the *same* thunks, not merely the same syntax.
+//
+// That is the difference that matters, and the one the D2 test does not make:
+// there, each worker built its own expressions over a shared parse, so no two
+// ever met on a thunk. Here they are handed one tree and race to force it, so
+// every claim, every wait for another worker's value, and every read of a
+// value another worker wrote is exercised — which is what -race has to see.
+func TestConcurrentForceSharesThunks(t *testing.T) {
+	evaluatingInParallel(t)
+	pr, err := p.ParseString(`let
+		slow = n: if n == 0 then 0 else slow (n - 1) + 1;
+		shared = slow 400;
+	in builtins.genList (i: { a = shared + i; b = "n${toString shared}"; }) 24`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFile(pr)
+	scope := *DefaultScope
+	scope.file = f
+
+	// The expected answers come from a tree of their own, so that the one the
+	// workers race on is still unforced when they start. Forcing that one here
+	// would leave them nothing to contend for.
+	tree := func() *Expression {
+		x := newWorker().newExpr()
+		x.setThunk(&scope, pr.Result)
+		return x
+	}
+	render := func(x *Expression) ([]string, error) {
+		return catching2(func() []string {
+			w := newWorker()
+			var out []string
+			for _, el := range x.Eval(w).List() {
+				out = append(out, el.Eval(w).Print(w, -1))
+			}
+			return out
+		})
+	}
+	ref, err := render(tree())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The list is forced here; its elements are still thunks. Each worker
+	// below forces all of them but starts somewhere different, so they are on
+	// different thunks at the same time rather than queueing behind one root —
+	// which is what makes them meet on a claim.
+	w0 := newWorker()
+	list, err := catching(func() NixList { return tree().Eval(w0).List() })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const workers = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for k := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			w := newWorker()
+			for i := range list {
+				x := list[(i+k*3)%len(list)]
+				got, err := catching(func() string { return x.Eval(w).Print(w, -1) })
+				if err != nil {
+					t.Errorf("evaluation failed: %v", err)
+					return
+				}
+				if want := ref[(i+k*3)%len(list)]; got != want {
+					t.Errorf("worker disagreed:\n got %s\nwant %s", got, want)
+				}
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+}
+
+// evaluatingInParallel turns on the mode that makes a thunk's claim atomic,
+// and turns it off again. A test that runs workers at once must set it: with
+// one worker the claim is touched plainly, which is what keeps the ordinary
+// evaluation as fast as it was before there were workers at all.
+func evaluatingInParallel(t *testing.T) {
+	t.Helper()
+	was := parallel
+	parallel = true
+	t.Cleanup(func() { parallel = was })
+}
+
+// catching2 is catching for a slice, which its type parameter cannot infer
+// from a bare call in a test.
+func catching2(f func() []string) ([]string, error) { return catching(f) }

@@ -103,7 +103,7 @@ func cacheAround(t *testing.T, src string) (before, after []staticSnap, err erro
 	// delay is what binds the parse to a file and runs the pass, so the
 	// snapshot has to come from the expression it returns — taking one from a
 	// file made separately would compare a store nothing evaluated in.
-	w := &worker{}
+	w := newWorker()
 	x := delay(w, DefaultScope, pr)
 	entries := x.scope().file.static.entries
 	before = snap(entries)

@@ -25,8 +25,8 @@ type Sym int32
 // reader that held the previous slice still finds every symbol that existed
 // then, since Intern only ever appends.
 type Symtab struct {
-	mu   sync.Mutex
-	syms map[string]Sym
+	mu    sync.Mutex
+	syms  map[string]Sym
 	names atomic.Pointer[[]string]
 }
 

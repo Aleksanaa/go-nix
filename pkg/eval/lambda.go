@@ -262,7 +262,7 @@ func apply2(w *worker, f NixLambda, a, b *Expression) *Expression {
 	// applySpine pointed the scratch expression at the body; give it one of
 	// its own, since the caller keeps it.
 	y := w.newExpr()
-	*y = x
+	y.take(&x)
 	return y
 }
 
