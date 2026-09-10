@@ -3,12 +3,20 @@ package eval
 import "strings"
 
 // NixString is a string together with the build inputs it references.
+//
+// Almost no string references anything, and a string is one of the most
+// numerous values there is, so what it may carry besides its content lives
+// behind a pointer that most strings never allocate.
 type NixString struct {
 	Content string
-	Context []*Derivation
-	// Impurities records values interpolated from the evaluator itself, such
-	// as the Nix version, that make the string non-reproducible:
-	// { "2.18": "reference to Nix version" }.
+	extra   *stringExtra
+}
+
+// stringExtra is what a string carries besides its content: the derivations it
+// refers to, and the values interpolated from the evaluator itself — such as
+// the Nix version — that make it non-reproducible.
+type stringExtra struct {
+	Context    []*Derivation
 	Impurities map[string]string
 }
 
@@ -28,14 +36,20 @@ func (str *NixString) Compare(val NixValue) bool {
 // absorb takes over the context and impurities of another string, which is
 // what interpolating it into this one means.
 func (str *NixString) absorb(other *NixString) {
-	if len(other.Context) != 0 {
-		str.Context = append(str.Context, other.Context...)
+	if other.extra == nil {
+		return
 	}
-	for name, reason := range other.Impurities {
-		if str.Impurities == nil {
-			str.Impurities = make(map[string]string, len(other.Impurities))
+	if str.extra == nil {
+		str.extra = &stringExtra{}
+	}
+	if len(other.extra.Context) != 0 {
+		str.extra.Context = append(str.extra.Context, other.extra.Context...)
+	}
+	for name, reason := range other.extra.Impurities {
+		if str.extra.Impurities == nil {
+			str.extra.Impurities = make(map[string]string, len(other.extra.Impurities))
 		}
-		str.Impurities[name] = reason
+		str.extra.Impurities[name] = reason
 	}
 }
 

@@ -198,9 +198,57 @@ func (x *Expression) evalString() NixValue {
 	if entry.val != nil {
 		return entry.val
 	}
+	if x.Node.Type == p.IStringNode {
+		return x.evalIndentedString(entry)
+	}
+	// A quoted string is built as it is read: what a piece contributes does
+	// not depend on the pieces after it, so there is nothing to collect first.
+	interpolated := false
+	result := &NixString{}
+	var b strings.Builder
+	b.Grow(x.stringSize())
+	for _, c := range x.Node.Nodes {
+		switch c.Type {
+		default:
+			throwf(ErrEval, "unsupported string part: %v", c.Type)
+		case p.TextNode:
+			b.WriteString(unescapeQuoted(x.parser().TokenString(c.Tokens[0])))
+		case p.InterpNode:
+			// Interpolations are evaluated in source order, as Nix does.
+			interpolated = true
+			part := CoerceToString(x.evalNodeAs(c.Nodes[0], blameInterp))
+			b.WriteString(part.Content)
+			result.absorb(part)
+		}
+	}
+	result.Content = b.String()
+	if !interpolated {
+		entry.val = result
+	}
+	return result
+}
+
+// stringSize guesses how long the string will be, so that building it does not
+// have to grow the buffer: the literal text is known exactly, and an
+// interpolation is guessed at.
+func (x *Expression) stringSize() int {
+	n := 0
+	for _, c := range x.Node.Nodes {
+		if c.Type == p.TextNode {
+			n += len(x.parser().TokenBytes(c.Tokens[0]))
+		} else {
+			n += 16
+		}
+	}
+	return n
+}
+
+// evalIndentedString evaluates a `”…”` string, whose pieces have to be
+// collected before any of them can be written: how much indentation to strip
+// is decided by all of them together.
+func (x *Expression) evalIndentedString(entry *static) NixValue {
 	interpolated := false
 	parts := make([]stringPart, 0, len(x.Node.Nodes))
-	indented := x.Node.Type == p.IStringNode
 	for _, c := range x.Node.Nodes {
 		switch c.Type {
 		default:
@@ -208,15 +256,12 @@ func (x *Expression) evalString() NixValue {
 		case p.TextNode:
 			parts = append(parts, stringPart{text: x.parser().TokenString(c.Tokens[0])})
 		case p.InterpNode:
-			// Interpolations are evaluated in source order, as Nix does.
 			interpolated = true
 			part := x.evalNodeAs(c.Nodes[0], blameInterp)
 			parts = append(parts, stringPart{interp: CoerceToString(part)})
 		}
 	}
-	if indented {
-		parts = stripIndentation(parts)
-	}
+	parts = stripIndentation(parts)
 
 	result := &NixString{}
 	var b strings.Builder
@@ -226,11 +271,7 @@ func (x *Expression) evalString() NixValue {
 			result.absorb(part.interp)
 			continue
 		}
-		if indented {
-			b.WriteString(unescapeIndented(part.text))
-		} else {
-			b.WriteString(unescapeQuoted(part.text))
-		}
+		b.WriteString(unescapeIndented(part.text))
 	}
 	result.Content = b.String()
 	if !interpolated {
