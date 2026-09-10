@@ -1,0 +1,122 @@
+package eval
+
+import (
+	"slices"
+	"testing"
+
+	p "github.com/aleksanaa/go-nix/pkg/parser"
+)
+
+// TestPreparedCacheIsReadOnly is the milestone of phase D1: what is cached
+// against the syntax is settled before the evaluation starts and never written
+// again, so that workers evaluating at once can all read it.
+//
+// The one exception is an attribute whose name is itself computed, which is
+// only known once the group is evaluated; that field is atomic, and the second
+// case below is what pins the exception to exactly that field.
+func TestPreparedCacheIsReadOnly(t *testing.T) {
+	for _, src := range []string{
+		`let f = x: x + 1; g = { a, b ? 2, ... }: a + b; in
+		 rec { p = f 1; q = g { a = 3; }; r = [ 1 2.5 "s" ''i'' ]; s = { t.u = p; }; v = s.t.u; }`,
+		`let xs = builtins.genList (i: i * 2) 5; in
+		 with { w = 1; }; builtins.foldl' (a: b: a + b + w) 0 xs`,
+		`let a = 1; in { inherit a; b = a; }.b`,
+	} {
+		before, after, err := cacheAround(t, src)
+		if err != nil {
+			t.Errorf("%s: %v", src, err)
+			continue
+		}
+		for id := range before {
+			if d := diffStatic(&before[id], &after[id]); d != "" {
+				t.Errorf("%s: node %d changed while evaluating: %s", src, id, d)
+			}
+		}
+	}
+}
+
+// TestComputedAttrNameIsTheOnlyWrite pins the exception: a name the syntax does
+// not give is filled in as the group is evaluated, and nothing else is.
+func TestComputedAttrNameIsTheOnlyWrite(t *testing.T) {
+	before, after, err := cacheAround(t, `let k = "a"; in (rec { ${k} = 1; b = 2; }).b`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writes := 0
+	for id := range before {
+		if d := diffStatic(&before[id], &after[id]); d != "" {
+			if d != "attrSym" {
+				t.Errorf("node %d changed while evaluating: %s", id, d)
+			}
+			writes++
+		}
+	}
+	if writes == 0 {
+		t.Error("expected the computed name to be filled in while evaluating")
+	}
+}
+
+// cacheAround evaluates src and returns the cache as the pass left it and as
+// the evaluation left it.
+func cacheAround(t *testing.T, src string) (before, after []static, err error) {
+	t.Helper()
+	pr, perr := p.ParseString(src)
+	if perr != nil {
+		return nil, nil, perr
+	}
+	// delay is what binds the parse to a file and runs the pass, so the
+	// snapshot has to come from the expression it returns — taking one from a
+	// file made separately would compare a store nothing evaluated in.
+	w := &worker{}
+	x := delay(w, DefaultScope, pr)
+	entries := x.scope().file.static.entries
+	before = make([]static, len(entries))
+	for i := range entries {
+		before[i] = copyStatic(&entries[i])
+	}
+	val, err := catching(func() NixValue { return x.Eval(w) })
+	if err != nil {
+		return nil, nil, err
+	}
+	// Printing forces the whole value, so every node is reached.
+	if _, err := catching(func() string { return val.Print(w, -1) }); err != nil {
+		return nil, nil, err
+	}
+	after = make([]static, len(entries))
+	for i := range entries {
+		after[i] = copyStatic(&entries[i])
+	}
+	return before, after, nil
+}
+
+// copyStatic takes the fields of an entry, atomics read rather than copied.
+func copyStatic(e *static) static {
+	var c static
+	c.val, c.expr, c.lambda, c.attrs, c.owner, c.sym, c.bad =
+		e.val, e.expr, e.lambda, e.attrs, e.owner, e.sym, e.bad
+	c.attrSym.Store(e.attrSym.Load())
+	return c
+}
+
+// diffStatic names the first field that differs, or "" if none does.
+func diffStatic(a, b *static) string {
+	switch {
+	case a.val != b.val:
+		return "val"
+	case a.expr != b.expr:
+		return "expr"
+	case a.lambda != b.lambda:
+		return "lambda"
+	case !slices.Equal(a.attrs, b.attrs):
+		return "attrs"
+	case a.owner != b.owner:
+		return "owner"
+	case a.sym != b.sym:
+		return "sym"
+	case a.bad != b.bad:
+		return "bad"
+	case a.attrSym.Load() != b.attrSym.Load():
+		return "attrSym"
+	}
+	return ""
+}

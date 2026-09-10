@@ -101,7 +101,7 @@ func (x *Expression) resolve(w *worker) *Expression {
 		x.setValue(x.evalString(w))
 
 	case p.IDNode:
-		sym, y, ok := scope.lookupNode(n)
+		sym, y, ok := scope.lookupNode(w, n)
 		if !ok {
 			w.throwf(ErrUndefinedVariable, "undefined variable '%s'", sym)
 		}
@@ -209,7 +209,7 @@ func (x *Expression) evalString(w *worker) NixValue {
 	result.Content = b.String()
 	val := StrValue(result)
 	if !interpolated {
-		entry.val = val
+		entry.cache(x.scope().file, val)
 	}
 	return val
 }
@@ -262,7 +262,7 @@ func (x *Expression) evalIndentedString(w *worker, entry *static) NixValue {
 	result.Content = b.String()
 	val := StrValue(result)
 	if !interpolated {
-		entry.val = val
+		entry.cache(x.scope().file, val)
 	}
 	return val
 }
@@ -368,52 +368,16 @@ func (x *Expression) evalFunction(w *worker) NixValue {
 // lambdaInfo describes a function node: the names it binds and where its body
 // is. The grammar hands us the body last, preceded by an identifier
 // (`a: …` or `…@a: …`) and/or a formal argument set (`{ a, b ? 1, ... }: …`).
+// lambdaInfo is what a function node binds and where its body is, worked out
+// before the evaluation started; see prepare.go. A shape the pass could not
+// accept is raised here rather than there, so that the failure belongs to the
+// evaluation that reached it and carries its backtrace.
 func (scope *Scope) lambdaInfo(w *worker, n *p.Node) *lambdaInfo {
 	e := scope.file.static.get(n.ID)
-	if e.lambda != nil {
-		return e.lambda
+	if e.lambda == nil {
+		w.throwf(ErrEval, "%s", e.bad)
 	}
-	fn := &lambdaInfo{Node: n, Body: n.Nodes[len(n.Nodes)-1]}
-	// A call's frame points at the function rather than at its body, so the
-	// body records which function it belongs to.
-	scope.file.static.get(fn.Body.ID).owner = n
-	for _, c := range n.Nodes[:len(n.Nodes)-1] {
-		switch c.Type {
-		case p.IDNode:
-			fn.Arg, fn.HasArg = scope.name(c), true
-		case p.ArgSetNode:
-			fn.HasFormal = true
-			fn.Formal = make(map[Sym]*p.Node, len(c.Nodes))
-			fn.FormalOrder = make([]Sym, 0, len(c.Nodes))
-			for _, arg := range c.Nodes {
-				if len(arg.Nodes) == 0 {
-					fn.HasEllipsis = true // `...`
-					continue
-				}
-				sym := scope.name(arg.Nodes[0])
-				var def *p.Node // `a ? default`
-				if len(arg.Nodes) == 2 {
-					def = arg.Nodes[1]
-				}
-				if _, dup := fn.Formal[sym]; dup {
-					w.throwf(ErrEval, "duplicate formal function argument '%s'", sym)
-				}
-				fn.Formal[sym] = def
-				fn.FormalOrder = append(fn.FormalOrder, sym)
-			}
-		default:
-			w.throwf(ErrEval, "unsupported function part: %v", c.Type)
-		}
-	}
-	if fn.HasArg && fn.HasFormal {
-		if _, dup := fn.Formal[fn.Arg]; dup {
-			w.throwf(ErrEval, "duplicate formal function argument '%s'", fn.Arg)
-		}
-	}
-	// Only a function the evaluator accepted is kept, so that one it rejects
-	// reports itself however often it is evaluated.
-	e.lambda = fn
-	return fn
+	return e.lambda
 }
 
 // selectAttr returns the attribute sym of the set this expression evaluates

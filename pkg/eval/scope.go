@@ -130,23 +130,23 @@ func (scope *Scope) lookupFrom(sym Sym) (x *Expression, hops, slot int32, ok boo
 	return with, -1, -1, with != nil
 }
 
-// lookupNode finds what an identifier node refers to, and interns its name.
+// lookupNode finds what an identifier node refers to.
 //
 // Which scope holds a name is decided by the syntax: the same identifier node,
 // evaluated again, is reached through a chain of scopes of the same shape. So
-// the number of scopes to skip is remembered against the node and the next
-// evaluation jumps straight to it, instead of probing a map at every level on
-// the way. Nix settles this once and for all at parse time; this arrives at
-// the same place without a pass of its own, and checks the name it lands on,
-// so that a chain of a shape it did not expect costs a search rather than a
-// wrong answer.
-func (scope *Scope) lookupNode(n *p.Node) (Sym, *Expression, bool) {
-	e := scope.file.static.get(n.ID)
-	if e.sym == 0 {
-		e.sym = Intern(scope.file.parser.TokenString(n.Tokens[0]))
-	}
-	sym := e.sym
-	if e.hops < 0 {
+// the number of scopes to skip is remembered and the next evaluation jumps
+// straight to it, instead of probing a set at every level on the way. Nix
+// settles this once and for all at parse time; this arrives at the same place
+// without a pass of its own, and checks the name it lands on, so that a chain
+// of a shape it did not expect costs a search rather than a wrong answer.
+//
+// What is remembered belongs to the worker rather than to the syntax: a slot
+// is a position in a set built at run time, so it is a fact about this
+// evaluation. See lookupMemo.
+func (scope *Scope) lookupNode(w *worker, n *p.Node) (Sym, *Expression, bool) {
+	sym := scope.file.static.get(n.ID).sym
+	m := w.remember(scope.file, n.ID)
+	if m.hops < 0 {
 		// Nothing in the chain binds this name lexically, which the syntax
 		// decides once and for all, so only a `with` can have it and the
 		// nearest one wins. Nix marks such a name the same way.
@@ -159,9 +159,9 @@ func (scope *Scope) lookupNode(n *p.Node) (Sym, *Expression, bool) {
 		}
 		return sym, nil, false
 	}
-	if e.hops > 0 {
+	if m.hops > 0 {
 		s := scope
-		for i := e.hops - 1; i > 0 && s != nil; i-- {
+		for i := m.hops - 1; i > 0 && s != nil; i-- {
 			s = s.Parent
 		}
 		if s != nil {
@@ -169,7 +169,7 @@ func (scope *Scope) lookupNode(n *p.Node) (Sym, *Expression, bool) {
 				if s.sym == sym {
 					return sym, (*Expression)(s.bound), true
 				}
-			} else if x, ok := (*AttrSet)(s.bound).at(e.slot-1, sym); ok {
+			} else if x, ok := (*AttrSet)(s.bound).at(m.slot-1, sym); ok {
 				// The name was in this slot last time and still is, which
 				// is the whole lookup: two loads and a compare.
 				return sym, x, true
@@ -178,11 +178,11 @@ func (scope *Scope) lookupNode(n *p.Node) (Sym, *Expression, bool) {
 	}
 	x, hops, slot, ok := scope.lookupFrom(sym)
 	if hops >= 0 {
-		e.hops, e.slot = hops+1, slot+1
+		m.hops, m.slot = hops+1, slot+1
 	} else {
 		// Either a `with` provided it or nothing did; both mean there is no
 		// lexical binding to find next time.
-		e.hops = -1
+		m.hops = -1
 	}
 	return sym, x, ok
 }
@@ -195,7 +195,7 @@ func (scope *Scope) evalNode(w *worker, n *p.Node) NixValue {
 	// binding — and a backtrace frame that says nothing the binding's own
 	// frame does not.
 	if n.Type == p.IDNode {
-		sym, x, ok := scope.lookupNode(n)
+		sym, x, ok := scope.lookupNode(w, n)
 		if !ok {
 			w.throwAt(scope, n, ErrUndefinedVariable, "undefined variable '%s'", sym)
 		}
@@ -226,14 +226,11 @@ func (scope *Scope) evalAttrPath(w *worker, path *p.Node) []Sym {
 	if e.attrs != nil {
 		return e.attrs
 	}
+	// A path with an interpolation in it names something different every
+	// time, so it is worked out here and kept by nobody.
 	attrs := make([]Sym, len(path.Nodes))
-	static := true
 	for i, c := range path.Nodes {
 		attrs[i] = scope.attrSym(w, c)
-		static = static && c.Type == p.IDNode
-	}
-	if static {
-		e.attrs = attrs
 	}
 	return attrs
 }

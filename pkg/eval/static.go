@@ -3,6 +3,7 @@ package eval
 import (
 	"slices"
 	"strconv"
+	"sync/atomic"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
@@ -28,19 +29,21 @@ type static struct {
 	// lambda is what a function node binds and where its body is, neither of
 	// which depends on the scope a closure over it is made in.
 	lambda *lambdaInfo
-	// hops is one more than the number of scopes between the one an
-	// identifier is evaluated in and the one that binds it, or zero when that
-	// is not settled yet.
-	hops int32
-	// slot is one more than the position of the name in the scope hops leads
-	// to, or zero when that scope binds a single name.
-	slot int32
 	// attrs is what an attribute path of plain identifiers names, which does
 	// not change between evaluations.
 	attrs []Sym
 	// attrSym is the name of the attribute whose value this node is, for the
 	// backtrace frame that says which attribute failed.
-	attrSym Sym
+	//
+	// It is the one thing here that evaluation can still write: an attribute
+	// whose name is itself computed is only named once the group is evaluated.
+	// Atomic so that workers evaluating the same group agree, and because a
+	// name settled by the pass is never written again — the store is guarded
+	// by a load, so the ordinary case is a read.
+	attrSym atomic.Int32
+	// bad is why the pass could not make sense of this node, raised if and
+	// when the node is evaluated so that the failure keeps its backtrace.
+	bad string
 	// owner is the function a body node belongs to, which is where a call's
 	// frame points.
 	owner *p.Node
@@ -52,6 +55,11 @@ type static struct {
 
 type staticStore struct {
 	entries []static
+	// sealed says the pass has finished and nothing may write here again.
+	// Evaluation only reads what is known about the syntax, so that several
+	// workers can read it at once; this is what catches a write that slips
+	// back in.
+	sealed bool
 }
 
 // get returns the entry for a node.
@@ -80,7 +88,9 @@ type file struct {
 // newFile binds a parse to the facts worked out about its nodes. The parser
 // counted them, so the array they go in is allocated once, at the right size.
 func newFile(pr *p.Parser) *file {
-	return &file{parser: pr, static: staticStore{entries: make([]static, pr.NodeCount())}}
+	f := &file{parser: pr, static: staticStore{entries: make([]static, pr.NodeCount())}}
+	f.prepare()
+	return f
 }
 
 // The value of each kind of literal, computed at most once per node.
@@ -128,30 +138,30 @@ func (scope *Scope) literalValue(w *worker, n *p.Node) (NixValue, bool) {
 
 // literal returns the value of a literal node, computing it at most once.
 func (scope *Scope) literal(w *worker, n *p.Node, compute func(*worker, string) NixValue) NixValue {
-	e := scope.file.static.get(n.ID)
-	if e.val.IsNone() {
-		e.val = compute(w, scope.file.parser.TokenString(n.Tokens[0]))
-	}
-	return e.val
+	return scope.file.static.get(n.ID).val
 }
 
 // name returns the interned name of an identifier node, interning it at most
 // once.
 func (scope *Scope) name(n *p.Node) Sym {
-	e := scope.file.static.get(n.ID)
-	if e.sym == 0 {
-		e.sym = Intern(scope.file.parser.TokenString(n.Tokens[0]))
-	}
-	return e.sym
+	return scope.file.static.get(n.ID).sym
 }
 
 // literalExpr returns a literal node as an already evaluated expression. A
 // literal is the same value however often it is reached, so one expression
 // serves every use of the node, and passing one as an argument costs nothing.
 func (scope *Scope) literalExpr(w *worker, n *p.Node) *Expression {
-	e := scope.file.static.get(n.ID)
-	if e.expr == nil {
-		e.expr = value(w, scope.evalNode(w, n))
+	return scope.file.static.get(n.ID).expr
+}
+
+// cache records the value of a literal that the pass works out, and refuses to
+// once the pass is done. The pass evaluates every string with nothing
+// interpolated into it, so evaluation never reaches this; if it ever does, the
+// cache is being written while workers may be reading it, and saying so here
+// is better than a race that only shows up under load.
+func (e *static) cache(f *file, val NixValue) {
+	if f.static.sealed {
+		panic("eval: the cache against the syntax was written while evaluating")
 	}
-	return e.expr
+	e.val = val
 }

@@ -29,6 +29,20 @@ type worker struct {
 	// sizes describe.
 	exprs  []Expression
 	scopes []Scope
+
+	// memo is where each identifier's binding was found last time, by node
+	// id, for the file the worker is currently in. It cannot live against the
+	// syntax the way the rest of what is known about a node does: the slot it
+	// names is a position in a set built at run time, so it is a fact about
+	// this evaluation rather than about the source. Keeping it per worker is
+	// what lets several of them look names up at once.
+	//
+	// One file is in hand at a time — the chain of a single evaluation stays
+	// in the file it started in — so the current one is cached and the rest
+	// are reached through the map.
+	memoFile *file
+	memo     []lookupMemo
+	memos    map[*file][]lookupMemo
 }
 
 // w is the worker every evaluation runs on. Phase D replaces it with one per
@@ -60,4 +74,31 @@ func (w *worker) newScope() *Scope {
 	s := &w.scopes[0]
 	w.scopes = w.scopes[1:]
 	return s
+}
+
+// lookupMemo is where a name was found last time: how many scopes up, and
+// which slot of that scope. Both are one-based, so that zero means nothing is
+// remembered; hops of -1 means the file binds the name nowhere, which the
+// syntax settles once and for all.
+type lookupMemo struct{ hops, slot int32 }
+
+// remember is the worker's memo for a node, growing into the file it is in.
+func (w *worker) remember(f *file, id uint32) *lookupMemo {
+	if w.memoFile != f {
+		w.enterFile(f)
+	}
+	return &w.memo[id]
+}
+
+// enterFile makes f the file the worker's memo is about.
+func (w *worker) enterFile(f *file) {
+	m, ok := w.memos[f]
+	if !ok {
+		m = make([]lookupMemo, len(f.static.entries))
+		if w.memos == nil {
+			w.memos = make(map[*file][]lookupMemo, 1)
+		}
+		w.memos[f] = m
+	}
+	w.memoFile, w.memo = f, m
 }

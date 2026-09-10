@@ -192,8 +192,11 @@ func (x *Expression) blamingAttr(sym Sym) *Expression {
 	if n := x.node(); n != nil {
 		// The same node is bound to the same name on every evaluation, so this
 		// is a write to a page that is already right almost every time.
-		if e := x.scope().file.static.get(n.ID); e.attrSym != sym {
-			e.attrSym = sym
+		// The pass settled the name for every attribute the syntax names
+		// outright, so this is a load and a compare; only a computed name is
+		// ever stored, and then only the first time the group is evaluated.
+		if e := x.scope().file.static.get(n.ID); e.attrSym.Load() != int32(sym) {
+			e.attrSym.Store(int32(sym))
 		}
 	}
 	return x
@@ -243,7 +246,7 @@ func (f evalFrame) traceFrame() Frame {
 	if f.node != nil && f.scope != nil {
 		e := f.scope.file.static.get(f.node.ID)
 		if f.blame == blameAttr {
-			sym = e.attrSym
+			sym = Sym(e.attrSym.Load())
 		}
 		if f.blame == blameCall && e.owner != nil && pr != nil {
 			pos = pr.NodePos(e.owner)
@@ -440,7 +443,7 @@ func (x *Expression) thunkFor(w *worker, n *p.Node) *Expression {
 	case p.IDNode:
 		// A name the chain does not hold may still come from a `with`, whose
 		// set has not been evaluated yet, so that one stays a thunk.
-		if _, y, ok := x.scope().lookupNode(n); ok {
+		if _, y, ok := x.scope().lookupNode(w, n); ok {
 			return y
 		}
 	case p.IntNode, p.FloatNode, p.PathNode, p.URINode:
