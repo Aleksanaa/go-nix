@@ -398,11 +398,14 @@ func (x *Expression) continueIn(n *p.Node, scope *Scope, kind blameKind) {
 // operand escape, and operands staying on the Go stack is what lets an
 // arithmetic-heavy expression allocate nothing per operand.
 func (x *Expression) finish(w *worker) {
+	// The depth is read before the claim is given up, not after: releasing it
+	// lets another worker claim the thunk and write its own depth there, and
+	// this one would then restore a stack position that was never its own.
+	w.depth = int(x.depth)
 	// Release the claim, unless the value already released it: setValue
 	// publishes and releases in the same store, so this only does anything
 	// when the force is being unwound past by a failure.
 	x.release(w)
-	w.depth = int(x.depth)
 }
 
 // value wraps an already known value as an evaluated expression.
@@ -562,22 +565,47 @@ func (x *Expression) claimSlow(w *worker) bool {
 		// Another worker is forcing it. Wait for it to publish a value, or to
 		// let go without one, which is what a failure does.
 		//
-		// TODO(D3): two workers each holding what the other waits for hang
-		// here, where one worker would have said "infinite recursion".
-		// Nothing forks yet, so nothing reaches it; see PLAN.md.
-		for {
-			switch held := atomic.LoadUint32(&x.state); held {
-			case stateForced:
-				return false
-			case 0:
-				// Free again and still without a value: the worker that had
-				// it failed, so try to claim it ourselves.
-			default:
-				runtime.Gosched()
-				continue
-			}
-			break
+		// The wait is recorded while it lasts, so that a worker waiting on us
+		// can see it: two workers each holding what the other waits for are a
+		// value defined in terms of itself, and get the error one worker would
+		// have got outright. Looking for that is not free, so it is done every
+		// so often rather than every turn — a cycle that is there stays there.
+		if x.waitFor(w) {
+			return false
 		}
 	}
 	return true
 }
+
+// waitFor blocks until the thunk is forced or released by whoever holds it,
+// reporting true if it came back with a value.
+//
+// The wait is recorded while it lasts — as whose claim it is behind, never as
+// the thunk itself; see waitState — so that a worker waiting on us can see it.
+// Two workers each holding what the other waits for are a value defined in
+// terms of itself, and get the error one worker would have got outright.
+// Looking for that is not free, so it is done every so often rather than every
+// turn: a cycle that is there stays there.
+func (x *Expression) waitFor(w *worker) bool {
+	defer w.wait.end()
+	for turn := 0; ; turn++ {
+		held := atomic.LoadUint32(&x.state)
+		switch held {
+		case stateForced:
+			return true
+		case 0:
+			// Free again and still without a value: the worker that had it
+			// failed, so the caller should try to claim it itself.
+			return false
+		}
+		w.wait.begin(held)
+		if turn%waitTurnsPerCheck == waitTurnsPerCheck-1 && w.waitingWouldCycle(held) {
+			w.throwf(ErrInfiniteRecursion, "infinite recursion encountered")
+		}
+		runtime.Gosched()
+	}
+}
+
+// waitTurnsPerCheck is how many times a wait goes round before looking for a
+// cycle among the workers waiting.
+const waitTurnsPerCheck = 32

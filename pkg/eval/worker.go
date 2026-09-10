@@ -1,7 +1,5 @@
 package eval
 
-import "sync/atomic"
-
 // A worker is the state an evaluation keeps that belongs to whoever is doing
 // the evaluating rather than to the expressions being evaluated: the stack a
 // backtrace is read from, and the blocks new expressions and scopes are handed
@@ -18,6 +16,10 @@ type worker struct {
 	// a thunk records when it is claimed, so that the worker holding it can be
 	// told apart from the ones waiting on it.
 	id uint32
+
+	// wait is what this worker is blocked on, when it is. It is read by other
+	// workers looking for a cycle among the ones waiting; see deadlock.go.
+	wait waitState
 
 	// stack holds the expressions currently being forced, innermost last. It
 	// is what an error is annotated from: throwf reads the position and the
@@ -57,18 +59,17 @@ type worker struct {
 // whole of the change, and is measured.
 var mainWorker = newWorker()
 
-// workerIDs hands out ids to workers, so that a thunk's claim names its owner
-// unambiguously. Zero is reserved for "unclaimed".
-var workerIDs atomic.Uint32
-
-// newWorker makes a worker with an id of its own. The id is what a thunk
-// records when the worker claims it, so it must never be zero.
+// newWorker makes a worker with an id of its own. The id is the slot it takes
+// in the registry, handed out there rather than from a counter of its own: a
+// claim on a thunk names its owner by id, and an id that does not match the
+// slot names the wrong worker.
 func newWorker() *worker {
-	id := workerIDs.Add(1)
-	if id == 0 || id == stateForced {
+	w := &worker{}
+	w.id = registerWorker(w)
+	if w.id == 0 || w.id == stateForced {
 		panic("eval: ran out of worker ids")
 	}
-	return &worker{id: id}
+	return w
 }
 
 // newExpr returns a zeroed expression from the block being handed out.
