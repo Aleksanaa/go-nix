@@ -53,8 +53,9 @@ func (s *Scope) single() *Expression {
 // scopeSlabSize is how many scopes are allocated at a time. A scope is only
 // ever reached from the one nested inside it, so a block of them is retained
 // exactly as long as its liveliest member — the same trade as exprSlabSize,
-// but a cheaper one, since a scope chain dies together.
-const scopeSlabSize = 256
+// but a cheaper one, since a scope chain dies together. 1024 measured fastest
+// on the call-heavy workloads; a scope chain rarely lives past one block.
+const scopeSlabSize = 1024
 
 // Subscope nests a scope binding a set of names.
 func (scope *Scope) subscope(w *worker, binds NixSet, lowPrio bool) *Scope {

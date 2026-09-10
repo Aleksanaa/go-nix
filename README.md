@@ -143,9 +143,11 @@ variable to a position in a flat environment, values as a tagged struct rather
 than a Go interface (which boxes every integer), and evaluation into a
 caller-provided value instead of an allocated thunk.
 
-`exprSlabSize` in `expr.go` allocates thunks in blocks. It is off by default:
-it is 14% faster and 2.4 times larger, because a block cannot be freed until
-every thunk in it is unreachable.
+`exprSlabSize` and `scopeSlabSize` allocate thunks and scopes in blocks. A
+block cannot be freed until every member in it is unreachable, but the
+benchmark workloads' lifetimes line up, so blocks of 2048 thunks and 1024
+scopes measure ~5% faster than blocks of 256 for less total allocation and no
+more live heap.
 
 ## Borrowed from the TypeScript compiler
 

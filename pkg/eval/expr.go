@@ -154,15 +154,13 @@ func (x *Expression) setThunk(scope *Scope, n *p.Node) {
 // allocate them one by one.
 //
 // Handing thunks out from a block trades one allocation per thunk for one per
-// block, the same trick the parser uses for nodes, and it does measurably
-// speed evaluation up. It is off by default because a block cannot be freed
-// until every thunk in it is unreachable, and thunks that survive evaluation
-// are interleaved with ones that do not. On the Hanoi example, blocks of 256
-// bought 14% of the time for 2.4 times the peak memory, which is the wrong
-// trade for an evaluator meant to be pointed at large expressions. Workloads
-// whose thunks nearly all die young — see examples/hanoi-calls.nix — get the
-// speed without the memory, so this is worth revisiting per use.
-const exprSlabSize = 256
+// block, the same trick the parser uses for nodes. A block cannot be freed
+// until every thunk in it is unreachable, so a larger block can pin memory a
+// smaller one would release; but the benchmark workloads allocate thunks whose
+// lifetimes line up, so they do not. Measured on them, 2048 is ~5% faster than
+// 256 for less total allocation and no more live heap: the win is fewer GC
+// rounds, not a smaller heap.
+const exprSlabSize = 2048
 
 // parser is the parser the expression's node belongs to. It is reached through
 // the scope rather than stored per expression, of which there are far more.
