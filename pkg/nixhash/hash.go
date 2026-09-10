@@ -36,13 +36,30 @@ func File(path string) Hash {
 
 // Path hash.
 func Path(path string) Hash {
+	h, err := PathFiltered(path, nil)
+	e.Exit(err)
+	return h
+}
+
+// PathFilter decides whether a path is included in a NAR dump. It is called
+// for each directory entry — never the root — with the entry's absolute path
+// and its type, one of "regular", "directory" or "symlink". Returning false
+// leaves the entry out of the archive.
+type PathFilter func(path, typ string) bool
+
+// PathFiltered is the NAR hash of a path, filtering which entries are
+// included. It reports the error rather than exiting, which the evaluator
+// needs so that a bad path is a Nix error rather than a crash.
+func PathFiltered(path string, filter PathFilter) (Hash, error) {
 	h := sha256.New()
 	hs := NewSink(h)
-	_, err := hs.Write(narVersionMagic1)
-	e.Exit(err)
-	dump(path, hs)
-
-	return Hash(h.Sum(nil))
+	if _, err := hs.Write(narVersionMagic1); err != nil {
+		return nil, err
+	}
+	if err := dump(path, hs, filter); err != nil {
+		return nil, err
+	}
+	return Hash(h.Sum(nil)), nil
 }
 
 // Compress the hash down to size bytes.

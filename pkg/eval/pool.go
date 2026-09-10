@@ -185,7 +185,12 @@ func forkRange(n int, body func(w *worker, lo, hi int)) func() {
 // chunk would cost more than the forcing saves.
 var workerPool = sync.Pool{New: func() any { return newWorker() }}
 
-func takeWorker() *worker { return workerPool.Get().(*worker) }
+func takeWorker() *worker {
+	w := workerPool.Get().(*worker)
+	// A pooled worker shares the base scope the import builtin evaluates in.
+	w.base = mainWorker.base
+	return w
+}
 
 func dropWorker(w *worker) {
 	// The chunk is over, so nothing is being forced and nothing is waited on;

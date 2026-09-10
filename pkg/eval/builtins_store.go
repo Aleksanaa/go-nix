@@ -97,23 +97,29 @@ func bDirOf(w *worker, args ...*Expression) NixValue {
 	val := args[0].Eval(w)
 	if val.Kind() == KindPath {
 		p := val.Path()
-		if i := strings.LastIndex(p.Path, "/"); i >= 0 {
-			return PathValue(&NixPath{Root: p.Root, Path: p.Path[:i]})
-		}
-		return PathValue(&NixPath{Root: p.Root})
+		return PathValue(&NixPath{Path: dirOfPath(p.Path)})
 	}
 	str := CoerceToString(w, val)
-	pos := strings.LastIndex(str.Content, "/")
-	var dir string
-	switch {
-	case pos < 0:
-		dir = "."
-	case pos == 0:
-		dir = "/"
-	default:
-		dir = str.Content[:pos]
+	dir := dirOfPath(str.Content)
+	if dir == "." {
+		return StrValue(withContext(".", str))
+	}
+	if dir == "/" {
+		return StrValue(withContext("/", str))
 	}
 	return StrValue(withContext(dir, str))
+}
+
+// dirOfPath is everything before the final slash, "." when there is none.
+func dirOfPath(s string) string {
+	i := strings.LastIndex(s, "/")
+	switch {
+	case i < 0:
+		return "."
+	case i == 0:
+		return "/"
+	}
+	return s[:i]
 }
 
 // bUnsafeDiscardStringContext implements builtins.unsafeDiscardStringContext:

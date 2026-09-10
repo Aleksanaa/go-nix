@@ -66,6 +66,12 @@ type worker struct {
 	// rather than recursing without end. It is only kept for a full print,
 	// which is the one traversal the depth bound cannot stop; see Print.
 	seen map[unsafe.Pointer]bool
+
+	// base is the scope an import evaluates its file in: the default scope,
+	// shared by every worker. It lives on the worker rather than being named
+	// from a builtin so that the builtins map can be initialised before the
+	// default scope is built.
+	base *Scope
 }
 
 // w is the worker every evaluation runs on. Phase D replaces it with one per

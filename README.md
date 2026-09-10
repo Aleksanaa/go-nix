@@ -5,8 +5,9 @@
 This repository contains:
 
 - `pkg/parser` — a Nix parser. Optimized for speed, it parses all Nixpkgs in 2 seconds. It preserves comments and source positions and can be used to implement Nix files formatting.
-- `pkg/eval` — a lazy evaluator for the Nix language. It evaluates the language itself, reports failures the way Nix does, and builds and hashes derivations in memory (no store is written, which is Nix's read-only mode); imports and the store are still missing.
-- `pkg/nixhash` — Nix-compatible hasher for store paths.
+- `pkg/eval` — a lazy evaluator for the Nix language. It evaluates the language itself, reports failures the way Nix does, builds and hashes derivations in memory, and loads files through `import` and the source builtins (`readFile`, `readDir`, `builtins.path`, …); no store is written, which is Nix's read-only mode.
+- `pkg/nixhash` — Nix-compatible hasher for store paths and derivations.
+- `pkg/source` — the evaluator's access to the file system: resolving paths and reading files and directories.
 - `cmd/gon` — an utility that exposes these libraries from the command line.
 
 # The evaluator

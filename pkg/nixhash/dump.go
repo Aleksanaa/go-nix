@@ -1,19 +1,21 @@
 package nixhash
 
 import (
+	"errors"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 	"sort"
-
-	"github.com/aleksanaa/go-nix/internal"
-	"github.com/orivej/e"
 )
 
-func dump(p string, sink Sink) {
+// dump writes the NAR encoding of p, following Nix's serialisation. filter, if
+// set, is called for each directory entry (never the root) with the entry's
+// absolute path and type; an entry it rejects is left out of the archive.
+func dump(p string, sink Sink, filter PathFilter) error {
 	fi, err := os.Lstat(p)
-	e.Exit(err)
+	if err != nil {
+		return err
+	}
 	sink.S("(")
 	switch {
 	case fi.Mode().IsRegular():
@@ -21,45 +23,84 @@ func dump(p string, sink Sink) {
 		if fi.Mode()&0100 != 0 {
 			sink.S("executable", "")
 		}
-		dumpContents(p, fi.Size(), sink)
+		if err := dumpContents(p, fi.Size(), sink); err != nil {
+			return err
+		}
 	case fi.IsDir():
 		sink.S("type", "directory")
-		for _, name := range readDirectory(p) {
+		names, err := readDirectory(p)
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			entry := path.Join(p, name)
+			if filter != nil && !filter(entry, fileType(entry)) {
+				continue
+			}
 			sink.S("entry", "(", "name", name, "node")
-			dump(path.Join(p, name), sink)
+			if err := dump(entry, sink, filter); err != nil {
+				return err
+			}
 			sink.S(")")
 		}
 	case fi.Mode()&os.ModeSymlink != 0:
 		target, err := os.Readlink(p)
-		e.Exit(err)
+		if err != nil {
+			return err
+		}
 		sink.S("type", "symlink", "target", target)
 	default:
-		internal.Panicf("illegal file: %q", path.Join(p, fi.Name()))
+		return errors.New("illegal file: " + p)
 	}
 	sink.S(")")
+	return nil
 }
 
-func dumpContents(p string, size int64, sink Sink) {
+// fileType is the name of a file's type, the way the path filter and
+// builtins.readDir spell it.
+func fileType(p string) string {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return "unknown"
+	}
+	switch {
+	case fi.Mode().IsRegular():
+		return "regular"
+	case fi.IsDir():
+		return "directory"
+	case fi.Mode()&os.ModeSymlink != 0:
+		return "symlink"
+	}
+	return "unknown"
+}
+
+func dumpContents(p string, size int64, sink Sink) error {
 	sink.S("contents")
 	f, err := os.Open(p)
-	e.Exit(err)
-	e.Exit(sink.Begin(size))
-	_, err = io.Copy(sink, f)
-	e.Exit(err)
-	e.Exit(sink.End())
-	e.Exit(f.Close())
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := sink.Begin(size); err != nil {
+		return err
+	}
+	if _, err := io.Copy(sink, f); err != nil {
+		return err
+	}
+	return sink.End()
 }
 
-func readDirectory(p string) []string {
-	fis, err := ioutil.ReadDir(p)
-	internal.Check(err)
+func readDirectory(p string) ([]string, error) {
+	fis, err := os.ReadDir(p)
+	if err != nil {
+		return nil, err
+	}
 	names := make([]string, 0, len(fis))
 	for _, fi := range fis {
-		name := fi.Name()
-		if name != "" {
+		if name := fi.Name(); name != "" {
 			names = append(names, name)
 		}
 	}
 	sort.Strings(names)
-	return names
+	return names, nil
 }

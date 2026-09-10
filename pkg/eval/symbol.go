@@ -78,6 +78,8 @@ var (
 	symStructuredAttrs = Intern("__structuredAttrs")
 	symAll             = Intern("all")
 	symDrvAttrs        = Intern("drvAttrs")
+	symPath            = Intern("path")
+	symFilter          = Intern("filter")
 )
 
 func Intern(name string) Sym {

@@ -1,10 +1,11 @@
 package nixhash
 
 import (
+	"errors"
 	"path"
 	"regexp"
 
-	"github.com/aleksanaa/go-nix/internal"
+	"github.com/orivej/e"
 )
 
 const storeDir = "/nix/store"
@@ -13,12 +14,33 @@ var rxStoreName = regexp.MustCompile(`^[A-Za-z0-9+._?=-]+$`)
 
 // StorePath returns nix store path of the pathname.
 func StorePath(pathname, basename string) string {
+	p, err := StorePathFiltered(pathname, basename, nil)
+	e.Exit(err)
+	return p
+}
+
+// StorePathFiltered is StorePath with a filter on which entries the archive
+// includes, reporting the error rather than exiting.
+func StorePathFiltered(pathname, basename string, filter PathFilter) (string, error) {
 	if basename == "" {
 		basename = path.Base(pathname)
 	}
-	checkStoreName(basename)
-	h := Path(pathname)
-	return fixedOutputPath(true, h, basename)
+	if err := CheckStoreName(basename); err != nil {
+		return "", err
+	}
+	h, err := PathFiltered(pathname, filter)
+	if err != nil {
+		return "", err
+	}
+	return fixedOutputPath(true, h, basename), nil
+}
+
+// CheckStoreName reports whether a name is a legal store name.
+func CheckStoreName(name string) error {
+	if !rxStoreName.MatchString(name) || name[0] == '.' {
+		return errors.New("illegal name: " + name)
+	}
+	return nil
 }
 
 func fixedOutputPath(recursive bool, contentHash Hash, name string) string {
@@ -32,10 +54,4 @@ func fixedOutputPath(recursive bool, contentHash Hash, name string) string {
 func makeStorePath(pathType string, h Hash, name string) string {
 	s := pathType + ":" + h.TypeString(16) + ":" + storeDir + ":" + name
 	return storeDir + "/" + String(s).Compress(20).String(32) + "-" + name
-}
-
-func checkStoreName(name string) {
-	if !rxStoreName.MatchString(name) || name[0] == '.' {
-		internal.Panicf("illegal name: %q", name)
-	}
 }

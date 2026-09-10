@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
+	"github.com/aleksanaa/go-nix/pkg/source"
 )
 
 // Static facts about a syntax node — the value of a literal, the interned name
@@ -87,12 +88,19 @@ func (s *staticStore) grow(id uint32) {
 type file struct {
 	parser *p.Parser
 	static staticStore
+	// dir is the directory the file lives in, which is what the relative
+	// paths inside it are resolved against.
+	dir string
 }
 
 // newFile binds a parse to the facts worked out about its nodes. The parser
 // counted them, so the array they go in is allocated once, at the right size.
 func newFile(pr *p.Parser) *file {
-	f := &file{parser: pr, static: staticStore{entries: make([]static, pr.NodeCount())}}
+	f := &file{
+		parser: pr,
+		static: staticStore{entries: make([]static, pr.NodeCount())},
+		dir:    source.Dir(source.Abs(pr.Path())),
+	}
 	f.prepare()
 	return f
 }
@@ -101,9 +109,16 @@ func newFile(pr *p.Parser) *file {
 
 func uriLiteral(w *worker, s string) NixValue { return String(s) }
 
-// TODO: resolve relative to the file being evaluated, and <lookup> paths
-// through NIX_PATH.
-func pathLiteral(w *worker, s string) NixValue { return PathValue(&NixPath{Root: "/", Path: s}) }
+// pathLiteral is the value of a path literal, resolved once per file against
+// the file's own directory. It is a method so that it can reach that
+// directory.
+func (pr *preparer) pathLiteral(w *worker, s string) NixValue {
+	r := resolvePathLiteral(pr.file.dir, s)
+	if r == "" {
+		w.throwf(ErrSyntax, "file '%s' was not found in the Nix search path (add it using $NIX_PATH or -I)", s[1:len(s)-1])
+	}
+	return PathValue(&NixPath{Path: r})
+}
 
 func floatLiteral(w *worker, s string) NixValue {
 	val, err := strconv.ParseFloat(s, 64)

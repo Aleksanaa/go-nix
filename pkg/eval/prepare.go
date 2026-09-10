@@ -46,7 +46,7 @@ func (pr *preparer) node(n *p.Node) {
 	case p.FloatNode:
 		pr.literal(n, floatLiteral)
 	case p.PathNode:
-		pr.literal(n, pathLiteral)
+		pr.literal(n, pr.pathLiteral)
 	case p.URINode:
 		pr.literal(n, uriLiteral)
 

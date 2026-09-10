@@ -98,10 +98,20 @@ var builtins = map[string]builtin{
 	"unsafeDiscardStringContext": {1, bUnsafeDiscardStringContext, "A string without the derivations it refers to.", false},
 
 	// Paths and hashing.
-	"baseNameOf": {1, bBaseNameOf, "The part of a path after the last slash.", false},
-	"dirOf":      {1, bDirOf, "The part of a path before the last slash.", false},
-	"hashString": {2, bHashString, "The base-16 digest of a string.", false},
-	"toFile":     {2, bToFile, "Store a string in a file and return its path.", false},
+	"baseNameOf":   {1, bBaseNameOf, "The part of a path after the last slash.", false},
+	"dirOf":        {1, bDirOf, "The part of a path before the last slash.", false},
+	"hashString":   {2, bHashString, "The base-16 digest of a string.", false},
+	"toFile":       {2, bToFile, "Store a string in a file and return its path.", false},
+	"pathExists":   {1, bPathExists, "Whether a path exists.", false},
+	"readFile":     {1, bReadFile, "The contents of a file as a string.", false},
+	"readDir":      {1, bReadDir, "A directory's entries mapped to their types.", false},
+	"path":         {1, bPath, "The store path of a source path.", false},
+	"filterSource": {2, bFilterSource, "The store path of a source path, filtered.", false},
+	"storeDir":     {0, bStoreDir, "The Nix store directory.", false},
+
+	// Files.
+	"import":       {1, bImport, "Load and evaluate a Nix file.", true},
+	"scopedImport": {2, bScopedImport, "Import a Nix file with an alternate scope.", false},
 
 	// Serialisation.
 	"fromJSON": {1, bFromJSON, "Parse a JSON string into a Nix value.", false},
@@ -146,5 +156,9 @@ func newDefaultScope(w *worker) *Scope {
 
 	builtinsSet.Bind1(symBuiltins, value(w, SetValue(builtinsSet)))
 	mainSet.Bind1(symBuiltins, value(w, SetValue(builtinsSet)))
-	return &Scope{bound: unsafe.Pointer(mainSet.finish(w))}
+	s := &Scope{bound: unsafe.Pointer(mainSet.finish(w))}
+	// The default scope is also where an import evaluates its file, which the
+	// worker carries so that a builtin need not name it before it exists.
+	w.base = s
+	return s
 }

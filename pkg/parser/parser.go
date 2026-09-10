@@ -34,6 +34,11 @@ func newParser(lr *lexResult) *Parser {
 	return &Parser{lexResult: lr, prev: -1, last: len(lr.tokens) - 1}
 }
 
+// Path is the name of the source this was parsed from: a file path, or
+// "«string»" for an expression given as text. The evaluator uses it to
+// resolve the relative paths a file contains against the file's directory.
+func (p *Parser) Path() string { return p.file.Name() }
+
 func (p *Parser) Lex(lval *yySymType) int {
 	if p.prev == p.last {
 		return 0
