@@ -74,12 +74,11 @@ func TestCrossWorkerCycleIsInfiniteRecursion(t *testing.T) {
 // assumed it was raced against the workers the test had abandoned.
 func forking(t *testing.T) {
 	t.Helper()
-	wasOps, wasWorkers := forkOps, parWorkers
-	forkOps = true
+	wasWorkers := parWorkers
 	parWorkers = max(parWorkers, 2)
 	t.Cleanup(func() {
 		waitForForks(t)
-		forkOps, parWorkers = wasOps, wasWorkers
+		parWorkers = wasWorkers
 	})
 }
 

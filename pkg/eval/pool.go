@@ -199,33 +199,7 @@ func dropWorker(w *worker) {
 // allows; the ones it splits onto get half of what is left each.
 func init() { mainWorker.budget = parWorkers }
 
-// forkOps says whether operator operands are forked as well as the builtins
-// that force whole lists. It is separate from GON_PAR, and still off, though
-// no longer because it is dangerous:
-//
-//	                default  GON_PAR_OPS=1   nix
-//	hanoi-calls          247             50   190
-//	lookup               118            137    86
-//	lazy                 122            137    82
-//	hanoi                116            135    78
-//	attrs                 75             79    60
-//
-// The win is a recursion that splits into two large independent halves, which
-// is what a fork is for. The loss used to be a fold whose operand happens to
-// be a call — `acc + builtins.getAttr name set` — where the work handed over
-// was over before the goroutine that took it had started, fifty thousand
-// times; that cost `attrs` 87ms → 204ms until the pass began marking calls
-// that reach the function they are written inside, and only those are forked.
-//
-// What is left is smaller and of a different kind. `hanoi` forks by the mark
-// and gains nothing: its halves are lists, and the `++` that joins them copies
-// both, so the concatenation sits on the critical path however cheap the
-// halves become. `lookup` and `lazy` barely fork at all and lose anyway,
-// because one fork anywhere turns goParallel on for the rest of the run and
-// the atomic claim is then paid everywhere.
-//
-// So the question is still the one marking could not answer: not which
-// applications are worth forking, but how much work one turns out to be. Only
-// evaluating it once says, and the worker's per-node memo from D1 is where a
-// count of that would go.
-var forkOps = os.Getenv("GON_PAR_OPS") == "1"
+// Operator operands are forked as well as the builtins that force whole lists.
+// Whether a given operand is worth it is decided per operator in forkWorthy,
+// not here: see eval_op.go for why `++` and `//` are excluded and how the
+// worker pool is only turned on when a fork is actually about to happen.

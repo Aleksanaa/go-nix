@@ -73,9 +73,9 @@ func (x *Expression) evalBinaryOp(w *worker, nt p.NodeType) NixValue {
 	}
 
 	// Both sides are forced, so where there is a worker to spare they can be
-	// forced at once; see operandsForked.
+	// forced at once; see forkWorthy.
 	var lhs, rhs NixValue
-	if forkOps && w.budget >= 2 && goParallel() {
+	if w.budget >= 2 && forkWorthy(w, x, nt) {
 		lhs, rhs = x.operandsForked(w)
 	} else {
 		lhs, rhs = x.operand(w, 0), x.operand(w, 1)
@@ -113,8 +113,31 @@ func (x *Expression) evalBinaryOp(w *worker, nt p.NodeType) NixValue {
 	}
 }
 
+// forkWorthy reports whether the right operand of x is a recursive call whose
+// two halves are worth forcing on separate workers.
+//
+// What the operator is decides it. `++` and `//` put the join on the critical
+// path — the result is the size of its operands, so however cheap the halves
+// become the operator still copies both — and an operand that is not a
+// recursive call does not divide the work, so handing it over costs more than
+// doing it. Only when neither holds is the worker pool turned on, which is the
+// side effect of goParallel; asking it of every operator up front is what made
+// a fold-shaped workload pay the atomic claim for nothing.
+func forkWorthy(w *worker, x *Expression, nt p.NodeType) bool {
+	switch nt {
+	case p.OpConcatNode, p.OpUpdateNode:
+		return false
+	}
+	rhs := x.node().Nodes[1]
+	if rhs.Type != p.ApplyNode || !x.scope().file.static.get(rhs.ID).recursive {
+		return false
+	}
+	return goParallel()
+}
+
 // operandsForked evaluates both sides of an operator that forces both, on two
-// workers where there is one to spare.
+// workers where there is one to spare. forkWorthy has already decided the
+// operand is worth it.
 //
 // This is the only fork point inside the evaluator rather than inside a
 // builtin, and it is the one a recursion needs: `f (k - 1) + f (k - 1)` is a
@@ -128,13 +151,7 @@ func (x *Expression) evalBinaryOp(w *worker, nt p.NodeType) NixValue {
 // inlined, and evalBinaryOp is on the path of every operator in every
 // evaluation.
 func (x *Expression) operandsForked(w *worker) (lhs, rhs NixValue) {
-	rhsNode := x.node().Nodes[1]
-	// The node type is in hand and settles most operands — a name, a literal —
-	// without reaching for what the pass worked out about them.
-	if rhsNode.Type != p.ApplyNode || !x.scope().file.static.get(rhsNode.ID).recursive {
-		return x.operand(w, 0), x.operand(w, 1)
-	}
-	y := x.WithNode(w, rhsNode)
+	y := x.WithNode(w, x.node().Nodes[1])
 	give := w.budget / 2
 	w.budget -= give
 	// The budget is given back however this returns. The wait for the fork is
