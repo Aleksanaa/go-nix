@@ -34,7 +34,7 @@ func (x *Expression) evalUnaryOp(nt p.NodeType) NixValue {
 			if !ok {
 				return False
 			}
-			y, found := set[sym]
+			y, found := set.Get(sym)
 			if !found {
 				return False
 			}

@@ -50,12 +50,13 @@ func (f *NixExprLambda) Compare(val NixValue) bool { return false }
 func (f *NixExprLambda) Apply(arg *Expression) *Expression {
 	var scope *Scope
 	if f.HasFormal {
-		binds := make(NixSet, 1+len(f.FormalOrder))
+		binds := NewSet(1 + len(f.FormalOrder))
 		scope = f.Scope.Subscope(binds, false)
 		if f.HasArg {
-			binds[f.Arg] = arg
+			binds.Bind1(f.Arg, arg)
 		}
 		f.bindFormals(binds, scope, arg)
+		binds.finish()
 	} else {
 		// `arg: body` binds one name, so it needs no map.
 		scope = f.Scope.Subscope1(f.Arg, arg)
@@ -74,24 +75,24 @@ func (f *NixExprLambda) bindFormals(binds NixSet, scope *Scope, arg *Expression)
 			anTypeName(arg.Value))
 	}
 	for _, sym := range f.FormalOrder {
-		switch y, given := args[sym]; {
+		switch y, given := args.Get(sym); {
 		case given:
-			binds[sym] = y
+			binds.Bind1(sym, y)
 		case f.Formal[sym] != nil:
-			binds[sym] = newScoped(scope, f.Formal[sym]).blamingAttr(sym)
+			binds.Bind1(sym, newScoped(scope, f.Formal[sym]).blamingAttr(sym))
 		default:
 			throwf(ErrEval, "function called without required argument '%s'", sym)
 		}
 	}
-	if f.HasEllipsis || len(args) <= len(f.Formal) {
+	if f.HasEllipsis || args.Len() <= len(f.Formal) {
 		// Without a surplus there is nothing unexpected to report; the loop
 		// above already rejected anything missing.
 		return
 	}
-	unexpected := make([]Sym, 0, len(args)-len(f.Formal))
-	for sym := range args {
-		if _, ok := f.Formal[sym]; !ok {
-			unexpected = append(unexpected, sym)
+	unexpected := make([]Sym, 0, args.Len()-len(f.Formal))
+	for _, a := range args.attrs {
+		if _, ok := f.Formal[a.sym]; !ok {
+			unexpected = append(unexpected, a.sym)
 		}
 	}
 	if len(unexpected) != 0 {

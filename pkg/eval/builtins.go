@@ -104,25 +104,25 @@ var globals = map[string]NixValue{
 var DefaultScope = newDefaultScope()
 
 func newDefaultScope() *Scope {
-	builtinsSet := make(NixSet, len(builtins)+len(globals)+1)
-	mainSet := make(NixSet, len(builtins)+len(globals)+1)
+	builtinsSet := NewSet(len(builtins) + len(globals) + 1)
+	mainSet := NewSet(2*len(builtins) + len(globals) + 1)
 
 	for name, b := range builtins {
 		sym := Intern(name)
 		op := &NixPrimop{Func: b.fn, ArgNum: b.arity, Doc: b.doc, Sym: sym}
-		builtinsSet[sym] = value(op)
+		builtinsSet.Bind1(sym, value(op))
 		if b.global {
-			mainSet[sym] = value(op)
+			mainSet.Bind1(sym, value(op))
 		}
-		mainSet[Intern("__"+name)] = value(op)
+		mainSet.Bind1(Intern("__"+name), value(op))
 	}
 	for name, val := range globals {
 		sym := Intern(name)
-		builtinsSet[sym] = value(val)
-		mainSet[sym] = value(val)
+		builtinsSet.Bind1(sym, value(val))
+		mainSet.Bind1(sym, value(val))
 	}
 
-	builtinsSet[symBuiltins] = value(builtinsSet)
-	mainSet[symBuiltins] = value(builtinsSet)
-	return &Scope{Binds: mainSet}
+	builtinsSet.Bind1(symBuiltins, value(builtinsSet))
+	mainSet.Bind1(symBuiltins, value(builtinsSet))
+	return &Scope{Binds: mainSet.finish()}
 }

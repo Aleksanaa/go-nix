@@ -63,43 +63,38 @@ func (scope *Scope) parser() *p.Parser {
 // `with`, so the nearest `with` match is remembered and only used once the
 // walk has finished without finding a lexical one.
 func (scope *Scope) Lookup(sym Sym) (*Expression, bool) {
-	x, _, ok := scope.lookupFrom(sym)
+	x, _, _, ok := scope.lookupFrom(sym)
 	return x, ok
 }
 
-// lookupFrom is Lookup, also reporting how many scopes had to be skipped to
-// reach a lexical binding. A `with` reports none: what its set holds is not
-// decided until it is evaluated, and a nearer `with` shadows a farther one, so
-// there is nothing about it worth remembering.
-func (scope *Scope) lookupFrom(sym Sym) (x *Expression, hops int32, ok bool) {
+// lookupFrom is Lookup, also reporting where a lexical binding was found: how
+// many scopes had to be skipped, and which slot of that scope holds it. A
+// `with` reports neither: what its set holds is not decided until it is
+// evaluated, and a nearer `with` shadows a farther one, so there is nothing
+// about it worth remembering.
+func (scope *Scope) lookupFrom(sym Sym) (x *Expression, hops, slot int32, ok bool) {
 	var with *Expression
-	hops = 0
 	for s := scope; s != nil; s, hops = s.Parent, hops+1 {
 		if s.LowPrio {
 			if with == nil {
-				if y, found := s.Binds[sym]; found {
+				if y, found := s.Binds.Get(sym); found {
 					with = y
 				}
 			}
 			continue
 		}
-		if y, found := s.lookup1(sym); found {
-			return y, hops, true
+		if s.expr != nil {
+			if s.sym == sym {
+				return s.expr, hops, -1, true
+			}
+			continue
+		}
+		if y, found := s.Binds.Get(sym); found {
+			return y, hops, s.Binds.slot(sym), true
 		}
 	}
-	return with, 0, with != nil
-}
-
-// lookup1 finds sym in this scope alone.
-func (s *Scope) lookup1(sym Sym) (*Expression, bool) {
-	if s.expr != nil {
-		if s.sym == sym {
-			return s.expr, true
-		}
-		return nil, false
-	}
-	x, ok := s.Binds[sym]
-	return x, ok
+	// A `with` reports no place: -1 says there is nothing to remember.
+	return with, -1, -1, with != nil
 }
 
 // lookupNode finds what an identifier node refers to, and interns its name.
@@ -118,20 +113,43 @@ func (scope *Scope) lookupNode(n *p.Node) (Sym, *Expression, bool) {
 		e.sym = Intern(scope.file.parser.TokenString(n.Tokens[0]))
 	}
 	sym := e.sym
+	if e.hops < 0 {
+		// Nothing in the chain binds this name lexically, which the syntax
+		// decides once and for all, so only a `with` can have it and the
+		// nearest one wins. Nix marks such a name the same way.
+		for s := scope; s != nil; s = s.Parent {
+			if s.LowPrio {
+				if x, ok := s.Binds.Get(sym); ok {
+					return sym, x, true
+				}
+			}
+		}
+		return sym, nil, false
+	}
 	if e.hops > 0 {
 		s := scope
 		for i := e.hops - 1; i > 0 && s != nil; i-- {
 			s = s.Parent
 		}
 		if s != nil {
-			if x, ok := s.lookup1(sym); ok {
+			if s.expr != nil {
+				if s.sym == sym {
+					return sym, s.expr, true
+				}
+			} else if x, ok := s.Binds.at(e.slot-1, sym); ok {
+				// The name was in this slot last time and still is, which
+				// is the whole lookup: two loads and a compare.
 				return sym, x, true
 			}
 		}
 	}
-	x, hops, ok := scope.lookupFrom(sym)
-	if ok {
-		e.hops = hops + 1
+	x, hops, slot, ok := scope.lookupFrom(sym)
+	if hops >= 0 {
+		e.hops, e.slot = hops+1, slot+1
+	} else {
+		// Either a `with` provided it or nothing did; both mean there is no
+		// lexical binding to find next time.
+		e.hops = -1
 	}
 	return sym, x, ok
 }

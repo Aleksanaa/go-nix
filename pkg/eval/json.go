@@ -27,11 +27,11 @@ func ValueFromNative(x any) NixValue {
 		}
 		return result
 	case map[string]any:
-		result := make(NixSet, len(t))
+		result := NewSet(len(t))
 		for key, val := range t {
-			result[Intern(key)] = value(ValueFromNative(val))
+			result.Bind1(Intern(key), value(ValueFromNative(val)))
 		}
-		return result
+		return result.keepFirst()
 	}
 	throwf(ErrType, "cannot convert a Go value of type %T to a Nix value", x)
 	return nil
@@ -62,15 +62,15 @@ func ValueToNative(x NixValue) any {
 	case NixSet:
 		// A set with a __toString or outPath attribute serialises as its
 		// string form, which is how derivations end up as store paths.
-		if _, ok := t[symToString]; ok {
+		if t.Has(symToString) {
 			return t.coerceToString(false).Content
 		}
-		if _, ok := t[symOutPath]; ok {
+		if t.Has(symOutPath) {
 			return t.coerceToString(false).Content
 		}
-		result := make(map[string]any, len(t))
-		for sym, x := range t {
-			result[sym.String()] = ValueToNative(x.Eval())
+		result := make(map[string]any, t.Len())
+		for _, a := range t.attrs {
+			result[a.sym.String()] = ValueToNative(a.x.Eval())
 		}
 		return result
 	}

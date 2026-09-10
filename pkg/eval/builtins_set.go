@@ -1,8 +1,10 @@
 package eval
 
+import "slices"
+
 func bAttrNames(args ...*Expression) NixValue {
 	set := assertSet(args[0].Eval())
-	result := make(NixList, 0, len(set))
+	result := make(NixList, 0, set.Len())
 	for _, sym := range set.Keys() {
 		result = append(result, value(String(sym.String())))
 	}
@@ -11,9 +13,10 @@ func bAttrNames(args ...*Expression) NixValue {
 
 func bAttrValues(args ...*Expression) NixValue {
 	set := assertSet(args[0].Eval())
-	result := make(NixList, 0, len(set))
+	result := make(NixList, 0, set.Len())
 	for _, sym := range set.Keys() {
-		result = append(result, set[sym])
+		x, _ := set.Get(sym)
+		result = append(result, x)
 	}
 	return result
 }
@@ -24,7 +27,7 @@ func bCatAttrs(args ...*Expression) NixValue {
 	list := assertList(args[1].Eval())
 	result := make(NixList, 0, len(list))
 	for _, x := range list {
-		if y, ok := assertSet(x.Eval())[sym]; ok {
+		if y, ok := assertSet(x.Eval()).Get(sym); ok {
 			result = append(result, y)
 		}
 	}
@@ -37,21 +40,21 @@ func bFunctionArgs(args ...*Expression) NixValue {
 	if !ok {
 		if _, ok := val.(NixLambda); ok {
 			// A builtin has no formal arguments to report.
-			return NixSet{}
+			return NewSet(0)
 		}
 		throwf(ErrType, "value is %s while a function was expected", anTypeName(val))
 	}
-	result := make(NixSet, len(f.Formal))
+	result := NewSet(len(f.Formal))
 	for sym, def := range f.Formal {
-		result[sym] = value(NixBool(def != nil))
+		result.Bind1(sym, value(NixBool(def != nil)))
 	}
-	return result
+	return result.finish()
 }
 
 func bGetAttr(args ...*Expression) NixValue {
 	sym := Intern(assertString(args[0].Eval()).Content)
 	set := assertSet(args[1].Eval())
-	x, ok := set[sym]
+	x, ok := set.Get(sym)
 	if !ok {
 		throwf(ErrMissingAttribute, "attribute '%s' missing", sym)
 	}
@@ -66,38 +69,36 @@ func bGroupBy(args ...*Expression) NixValue {
 		sym := Intern(assertString(f.Apply(x).Eval()).Content)
 		groups[sym] = append(groups[sym], x)
 	}
-	result := make(NixSet, len(groups))
+	result := NewSet(len(groups))
 	for sym, group := range groups {
-		result[sym] = value(group)
+		result.Bind1(sym, value(group))
 	}
-	return result
+	return result.finish()
 }
 
 func bHasAttr(args ...*Expression) NixValue {
 	sym := Intern(assertString(args[0].Eval()).Content)
-	_, ok := assertSet(args[1].Eval())[sym]
-	return NixBool(ok)
+	return NixBool(assertSet(args[1].Eval()).Has(sym))
 }
 
 func bIntersectAttrs(args ...*Expression) NixValue {
 	left := assertSet(args[0].Eval())
 	right := assertSet(args[1].Eval())
-	result := make(NixSet, min(len(left), len(right)))
-	// Iterate the smaller set, since only shared names can contribute.
-	if len(right) <= len(left) {
-		for sym, x := range right {
-			if _, ok := left[sym]; ok {
-				result[sym] = x
-			}
+	// Both are in order, so this walks them side by side and takes the value
+	// from the right, as Nix does.
+	result := make([]attr, 0, min(left.Len(), right.Len()))
+	i, j := 0, 0
+	for i < len(left.attrs) && j < len(right.attrs) {
+		switch a, b := left.attrs[i], right.attrs[j]; {
+		case a.sym < b.sym:
+			i++
+		case a.sym > b.sym:
+			j++
+		default:
+			result, i, j = append(result, b), i+1, j+1
 		}
-		return result
 	}
-	for sym := range left {
-		if x, ok := right[sym]; ok {
-			result[sym] = x
-		}
-	}
-	return result
+	return setOf(result)
 }
 
 // bListToAttrs builds a set from a list of { name, value } sets. As in Nix,
@@ -105,33 +106,34 @@ func bIntersectAttrs(args ...*Expression) NixValue {
 func bListToAttrs(args ...*Expression) NixValue {
 	list := assertList(args[0].Eval())
 	nameSym, valueSym := Intern("name"), symValue
-	result := make(NixSet, len(list))
+	result := NewSet(len(list))
 	for _, x := range list {
 		entry := assertSet(x.Eval())
-		nameExpr, ok := entry[nameSym]
+		nameExpr, ok := entry.Get(nameSym)
 		if !ok {
 			throwf(ErrMissingAttribute, "attribute 'name' missing in a list element of listToAttrs")
 		}
-		valExpr, ok := entry[valueSym]
+		valExpr, ok := entry.Get(valueSym)
 		if !ok {
 			throwf(ErrMissingAttribute, "attribute 'value' missing in a list element of listToAttrs")
 		}
-		if sym := Intern(assertString(nameExpr.Eval()).Content); result[sym] == nil {
-			result[sym] = valExpr
-		}
+		result.Bind1(Intern(assertString(nameExpr.Eval()).Content), valExpr)
 	}
-	return result
+	return result.keepFirst()
 }
 
 func bRemoveAttrs(args ...*Expression) NixValue {
 	set := assertSet(args[0].Eval())
 	names := assertList(args[1].Eval())
-	result := make(NixSet, len(set))
-	for sym, x := range set {
-		result[sym] = x
-	}
+	drop := make([]Sym, 0, len(names))
 	for _, x := range names {
-		delete(result, Intern(assertString(x.Eval()).Content))
+		drop = append(drop, Intern(assertString(x.Eval()).Content))
 	}
-	return result
+	result := make([]attr, 0, set.Len())
+	for _, a := range set.attrs {
+		if !slices.Contains(drop, a.sym) {
+			result = append(result, a)
+		}
+	}
+	return setOf(result)
 }

@@ -2,52 +2,171 @@ package eval
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
-// NixSet is an attribute set mapping names to lazily evaluated values.
-type NixSet map[Sym]*Expression
+// AttrSet is an attribute set: the names it binds, each with the expression
+// that produces its value.
+//
+// Nix keeps a set as a sorted array of name/value pairs, and so does this. A
+// set is one object rather than a hash table, a name is found by comparing
+// four-byte symbols, and `//` and the set builtins are merges of two ordered
+// runs rather than rehashing.
+type AttrSet struct {
+	attrs []attr
+	// sorted says the attributes are in symbol order, which is what a lookup
+	// binary searches. A set being built is not: names are appended and the
+	// whole thing is put in order once, when the set is finished.
+	sorted bool
+}
+
+// NixSet is how a set is passed around: always by pointer, so that a value
+// holding one costs a word, and a scope shares the set it binds rather than
+// copying it.
+type NixSet = *AttrSet
+
+// attr is one name and the expression that produces its value.
+type attr struct {
+	sym Sym
+	x   *Expression
+}
+
+// NewSet returns an empty attribute set with room for n attributes.
+func NewSet(n int) NixSet { return &AttrSet{attrs: make([]attr, 0, n)} }
+
+// setOf returns a set of attributes already in symbol order.
+func setOf(attrs []attr) NixSet { return &AttrSet{attrs: attrs, sorted: true} }
+
+// Len is how many attributes the set has.
+func (s *AttrSet) Len() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.attrs)
+}
+
+// cmpSym orders attributes by symbol, which is the order they are kept in.
+// Symbols are interned in first-seen order, so this is not alphabetical; what
+// has to be read alphabetically asks Keys.
+func cmpSym(a attr, sym Sym) int {
+	switch {
+	case a.sym < sym:
+		return -1
+	case a.sym > sym:
+		return 1
+	}
+	return 0
+}
+
+// scanMax is how large a set may be before a lookup binary searches it rather
+// than scanning it. Most sets are small — the bindings of a `let`, the scope a
+// call introduces — and a run of four-byte compares beats a search that cannot
+// be inlined until there are a good many of them.
+const scanMax = 8
+
+// Get returns the attribute named sym, unevaluated.
+func (s *AttrSet) Get(sym Sym) (*Expression, bool) {
+	if s == nil {
+		return nil, false
+	}
+	// A set still being built is scanned whatever its size: binding groups
+	// large enough for that to matter do not look names up in themselves.
+	if len(s.attrs) <= scanMax || !s.sorted {
+		for i := range s.attrs {
+			if s.attrs[i].sym == sym {
+				return s.attrs[i].x, true
+			}
+		}
+		return nil, false
+	}
+	// A plain search over four-byte symbols, rather than slices.BinarySearch
+	// with a comparison function it cannot inline.
+	lo, hi := 0, len(s.attrs)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if s.attrs[mid].sym < sym {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo == len(s.attrs) || s.attrs[lo].sym != sym {
+		return nil, false
+	}
+	return s.attrs[lo].x, true
+}
+
+// Has reports whether the set binds sym.
+func (s *AttrSet) Has(sym Sym) bool {
+	_, ok := s.Get(sym)
+	return ok
+}
+
+// at returns the attribute in slot i when that is the one named sym. It is
+// how a lookup that remembers where a name was last found checks that it is
+// still looking at the right one.
+func (s *AttrSet) at(i int32, sym Sym) (*Expression, bool) {
+	if s == nil || !s.sorted || i < 0 || int(i) >= len(s.attrs) || s.attrs[i].sym != sym {
+		return nil, false
+	}
+	return s.attrs[i].x, true
+}
+
+// slot returns the position of sym, or -1.
+func (s *AttrSet) slot(sym Sym) int32 {
+	if s == nil || !s.sorted {
+		return -1
+	}
+	for i := range s.attrs {
+		if s.attrs[i].sym == sym {
+			return int32(i)
+		}
+	}
+	return -1
+}
 
 // Keys returns the attribute names in the order Nix presents them:
 // alphabetically, so that printing and builtins.attrNames are deterministic.
-func (s NixSet) Keys() []Sym {
-	keys := make([]Sym, 0, len(s))
-	for sym := range s {
-		keys = append(keys, sym)
+func (s *AttrSet) Keys() []Sym {
+	keys := make([]Sym, 0, s.Len())
+	for _, a := range s.attrs {
+		keys = append(keys, a.sym)
 	}
 	SortSym(keys)
 	return keys
 }
 
-func (s NixSet) Print(recurse int) string {
+func (s *AttrSet) Print(recurse int) string {
 	if recurse == 0 {
 		return "{ ... }"
 	}
-	parts := make([]string, 0, len(s)+2)
+	parts := make([]string, 0, s.Len()+2)
 	parts = append(parts, "{")
 	for _, key := range s.Keys() {
-		parts = append(parts, fmt.Sprintf("%s = %s;", key, s[key].Eval().Print(recurse-1)))
+		x, _ := s.Get(key)
+		parts = append(parts, fmt.Sprintf("%s = %s;", key, x.Eval().Print(recurse-1)))
 	}
 	return strings.Join(append(parts, "}"), " ")
 }
 
-// Bind1 adds a single attribute, rejecting a redefinition.
-func (s NixSet) Bind1(sym Sym, x *Expression) {
-	if _, ok := s[sym]; ok {
-		throwf(ErrEval, "attribute '%s' already defined", sym)
-	}
-	s[sym] = x
+// Bind1 adds a single attribute. A redefinition is caught when the set is
+// finished, which is also when the names are put in order: checking here
+// instead would mean searching the set once per binding.
+func (s *AttrSet) Bind1(sym Sym, x *Expression) {
+	s.attrs = append(s.attrs, attr{sym, x})
+	s.sorted = false
 }
 
 // Bind adds an attribute under a path, creating the intermediate sets that
 // `a.b.c = v;` implies.
-func (s NixSet) Bind(syms []Sym, x *Expression) {
+func (s *AttrSet) Bind(syms []Sym, x *Expression) {
 	last := len(syms) - 1
 	for i, sym := range syms[:last] {
-		y, ok := s[sym]
+		y, ok := s.Get(sym)
 		if !ok {
-			sub := NixSet{}
-			s[sym] = value(sub)
+			sub := NewSet(1)
+			s.Bind1(sym, value(sub))
 			s = sub
 			continue
 		}
@@ -62,26 +181,74 @@ func (s NixSet) Bind(syms []Sym, x *Expression) {
 	s.Bind1(syms[last], x)
 }
 
-// Update returns `s // other`.
-func (s NixSet) Update(other NixSet) NixSet {
-	result := make(NixSet, len(s)+len(other))
-	for sym, x := range s {
-		result[sym] = x
+// finishAll puts this set and the ones nested inside it in order, which is
+// what a binding group does once it is complete.
+func (s *AttrSet) finishAll() {
+	for _, a := range s.attrs {
+		if sub, ok := a.x.Value.(NixSet); ok && !sub.sorted {
+			sub.finishAll()
+		}
 	}
-	for sym, x := range other {
-		result[sym] = x
-	}
-	return result
+	s.finish()
 }
 
-func (s NixSet) Compare(val NixValue) bool {
+// finish puts a set that was built by appending in order, and reports a name
+// bound twice. Every set reaches this before anything reads it.
+func (s *AttrSet) finish() NixSet {
+	if s.sorted {
+		return s
+	}
+	// Stable, so that a name bound twice keeps the first of the two and the
+	// error below names the same one however the sort moved them.
+	slices.SortStableFunc(s.attrs, func(a, b attr) int { return cmpSym(a, b.sym) })
+	for i := 1; i < len(s.attrs); i++ {
+		if s.attrs[i].sym == s.attrs[i-1].sym {
+			throwf(ErrEval, "attribute '%s' already defined", s.attrs[i].sym)
+		}
+	}
+	s.sorted = true
+	return s
+}
+
+// keepFirst puts a set in order, dropping a repeated name in favour of the
+// first that was added. It is what builtins.listToAttrs does with a name that
+// appears twice, where a binding group would fail.
+func (s *AttrSet) keepFirst() NixSet {
+	slices.SortStableFunc(s.attrs, func(a, b attr) int { return cmpSym(a, b.sym) })
+	s.attrs = slices.CompactFunc(s.attrs, func(a, b attr) bool { return a.sym == b.sym })
+	s.sorted = true
+	return s
+}
+
+// Update returns `s // other`: a merge of two runs already in order, so the
+// result is in order without sorting anything.
+func (s *AttrSet) Update(other NixSet) NixSet {
+	merged := make([]attr, 0, len(s.attrs)+len(other.attrs))
+	i, j := 0, 0
+	for i < len(s.attrs) && j < len(other.attrs) {
+		switch a, b := s.attrs[i], other.attrs[j]; {
+		case a.sym < b.sym:
+			merged, i = append(merged, a), i+1
+		case a.sym > b.sym:
+			merged, j = append(merged, b), j+1
+		default:
+			// The right-hand side wins, which is what `//` means.
+			merged, i, j = append(merged, b), i+1, j+1
+		}
+	}
+	merged = append(merged, s.attrs[i:]...)
+	merged = append(merged, other.attrs[j:]...)
+	return setOf(merged)
+}
+
+func (s *AttrSet) Compare(val NixValue) bool {
 	other, ok := val.(NixSet)
-	if !ok || len(s) != len(other) {
+	if !ok || len(s.attrs) != len(other.attrs) {
 		return false
 	}
-	for sym, x := range s {
-		y, ok := other[sym]
-		if !ok || !x.Eval().Compare(y.Eval()) {
+	for i, a := range s.attrs {
+		b := other.attrs[i]
+		if a.sym != b.sym || !a.x.Eval().Compare(b.x.Eval()) {
 			return false
 		}
 	}
@@ -96,15 +263,32 @@ func symNames(syms []Sym) []string {
 	return names
 }
 
-// NewSet returns an empty attribute set with room for n attributes.
-func NewSet(n int) NixSet { return make(NixSet, n) }
-
-// Get returns the attribute named sym, unevaluated.
-func (s NixSet) Get(sym Sym) (*Expression, bool) {
-	x, ok := s[sym]
-	return x, ok
-}
-
 // Set binds sym, replacing whatever was there. It is Bind1 without the
 // redefinition check, for the REPL, where rebinding a name is the point.
-func (s NixSet) Set(sym Sym, x *Expression) { s[sym] = x }
+func (s *AttrSet) Set(sym Sym, x *Expression) {
+	if s.sorted {
+		if i, ok := slices.BinarySearchFunc(s.attrs, sym, cmpSym); ok {
+			s.attrs[i].x = x
+			return
+		} else {
+			s.attrs = slices.Insert(s.attrs, i, attr{sym, x})
+			return
+		}
+	}
+	for i := range s.attrs {
+		if s.attrs[i].sym == sym {
+			s.attrs[i].x = x
+			return
+		}
+	}
+	s.Bind1(sym, x)
+}
+
+// pair is a set of two known attributes, which is the shape of the answer a
+// handful of builtins give.
+func pair(sym1 Sym, val1 NixValue, sym2 Sym, val2 NixValue) NixSet {
+	s := NewSet(2)
+	s.Bind1(sym1, value(val1))
+	s.Bind1(sym2, value(val2))
+	return s.finish()
+}

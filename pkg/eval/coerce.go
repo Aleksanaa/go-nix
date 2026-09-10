@@ -53,7 +53,7 @@ func coerceToString(val NixValue, more bool) *NixString {
 // coerceToString on a set uses __toString if present, else outPath, which is
 // what makes a derivation usable inside a string.
 func (s NixSet) coerceToString(more bool) *NixString {
-	if x, ok := s[symToString]; ok {
+	if x, ok := s.Get(symToString); ok {
 		fn, ok := x.Eval().(NixLambda)
 		if !ok {
 			throwf(ErrType, "value of the __toString attribute is %s while a function was expected",
@@ -61,7 +61,7 @@ func (s NixSet) coerceToString(more bool) *NixString {
 		}
 		return coerceToString(fn.Apply(value(s)).Eval(), more)
 	}
-	if x, ok := s[symOutPath]; ok {
+	if x, ok := s.Get(symOutPath); ok {
 		return coerceToString(x.Eval(), more)
 	}
 	throwf(ErrType, "cannot coerce a set to a string: it has neither a __toString nor an outPath attribute")

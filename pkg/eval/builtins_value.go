@@ -170,8 +170,8 @@ func deepForce(val NixValue) {
 			deepForce(x.Eval())
 		}
 	case NixSet:
-		for _, x := range v {
-			deepForce(x.Eval())
+		for _, a := range v.attrs {
+			deepForce(a.x.Eval())
 		}
 	}
 }
@@ -199,10 +199,10 @@ func bTryEval(args ...*Expression) (result NixValue) {
 		if err := asEvalError(v); err == nil || !err.Kind.Catchable() {
 			panic(v)
 		}
-		result = NixSet{symSuccess: value(False), symValue: value(False)}
+		result = pair(symSuccess, False, symValue, False)
 	}()
 	val := args[0].Eval()
-	return NixSet{symSuccess: value(True), symValue: value(val)}
+	return pair(symSuccess, True, symValue, val)
 }
 
 func bTrace(args ...*Expression) NixValue {

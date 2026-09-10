@@ -129,7 +129,7 @@ func bPartition(args ...*Expression) NixValue {
 			wrong = append(wrong, x)
 		}
 	}
-	return NixSet{symRight: value(right), symWrong: value(wrong)}
+	return pair(symRight, right, symWrong, wrong)
 }
 
 // bSort sorts with a strict less-than comparator, keeping equal elements in

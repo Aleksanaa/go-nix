@@ -247,7 +247,7 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 		bindNodes = n.Nodes[0].Nodes
 	}
 	// Inherited bindings make the set larger than this estimate.
-	set := make(NixSet, len(bindNodes))
+	set := NewSet(len(bindNodes))
 	scope := x.Scope
 	if nt == p.RecSetNode || nt == p.LetNode {
 		// A recursive set and a `let` are in scope of their own bindings.
@@ -281,6 +281,10 @@ func (x *Expression) evalBinds(nt p.NodeType) {
 			}
 		}
 	}
+	// The names are put in order now that the group is complete, which is
+	// also when a name bound twice is caught. Nothing has read the set yet:
+	// the bindings are thunks, and the body below is only pointed at.
+	set.finishAll()
 	if nt == p.LetNode {
 		x.continueAt(n.Nodes[1], scope)
 	} else {
@@ -305,7 +309,7 @@ func (x *Expression) evalSelect(nt p.NodeType) *Expression {
 		// As in Nix, `or` also covers selecting from a non-set.
 		set, ok := expr.Eval().(NixSet)
 		if ok {
-			if y, found := set[sym]; found {
+			if y, found := set.Get(sym); found {
 				expr = y
 				continue
 			}
@@ -389,7 +393,7 @@ func (scope *Scope) lambdaInfo(n *p.Node) *lambdaInfo {
 func (x *Expression) selectAttr(sym Sym) *Expression {
 	return thunk(func() NixValue {
 		set := assertSet(x.Eval())
-		y, ok := set[sym]
+		y, ok := set.Get(sym)
 		if !ok {
 			throwf(ErrMissingAttribute, "attribute '%s' missing", sym)
 		}

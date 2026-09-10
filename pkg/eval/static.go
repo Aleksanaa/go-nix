@@ -36,6 +36,9 @@ type static struct {
 	// identifier is evaluated in and the one that binds it, or zero when that
 	// is not settled yet.
 	hops int32
+	// slot is one more than the position of the name in the scope hops leads
+	// to, or zero when that scope binds a single name.
+	slot int32
 	// attrSym is the name of the attribute whose value this node is, for the
 	// backtrace frame that says which attribute failed.
 	attrSym Sym
