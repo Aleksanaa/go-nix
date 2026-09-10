@@ -1,0 +1,297 @@
+package nixhash
+
+import (
+	"sort"
+	"strings"
+)
+
+// Derivation hashing.
+//
+// A derivation's store path and the store paths of its outputs are pure
+// functions of the derivation, so they are computed here without touching the
+// store: Nix's read-only mode does exactly this (see `computeStorePath` in
+// `src/libstore/derivations.cc`). The serialised form is Nix's ATerm encoding
+// (`src/libstore/derivation/aterm.cc`), and the one thing the hash of a
+// derivation that depends on other derivations needs is their hashes modulo
+// their own output paths, which the caller supplies through resolve.
+
+const drvExtension = ".drv"
+
+// Output is one output of a derivation. An input-addressed output has only
+// its Path set; the HashAlgo and Hash fields are for content-addressed
+// outputs, which this package does not produce.
+type Output struct {
+	Path     string
+	HashAlgo string
+	Hash     string
+}
+
+// Derivation is what the hash of a derivation depends on. The map-valued
+// fields are serialised in ascending key order, which is the canonical order
+// the ATerm encoding requires.
+type Derivation struct {
+	Name      string
+	System    string
+	Builder   string
+	Args      []string
+	Outputs   map[string]Output
+	InputDrvs map[string][]string // derivation path -> its output names, sorted
+	InputSrcs []string            // source store paths, sorted
+	Env       map[string]string
+}
+
+// Unparse serialises the derivation in Nix's ATerm format.
+func (d *Derivation) Unparse() string { return d.aterm(false, false, nil) }
+
+// UnparseModulo serialises the derivation with its outputs blanked and its
+// input derivation paths replaced by their hashes modulo, which resolve looks
+// up by derivation path. It is the form a derivation hashes to when its own
+// output paths are being computed.
+func (d *Derivation) UnparseModulo(resolve func(drvPath string) (string, bool)) string {
+	return d.aterm(true, true, func(drvPath string) string {
+		h, _ := resolve(drvPath)
+		return h
+	})
+}
+
+// OutputHash is the hash modulo used to compute the derivation's own output
+// paths: the SHA-256 of UnparseModulo. The second result is false when an
+// input derivation's hash is not known, which resolve reports.
+func (d *Derivation) OutputHash(resolve func(drvPath string) (string, bool)) (Hash, bool) {
+	var missing bool
+	contents := d.aterm(true, true, func(drvPath string) string {
+		h, ok := resolve(drvPath)
+		if !ok {
+			missing = true
+		}
+		return h
+	})
+	if missing {
+		return nil, false
+	}
+	return String(contents), true
+}
+
+// InputHash is the hash modulo a derivation takes when it is used as an input
+// to another: its input derivations are replaced by their hashes modulo, but
+// its own output paths are kept. It is what the caller records against the
+// derivation's path and hands back to resolve.
+func (d *Derivation) InputHash(resolve func(drvPath string) (string, bool)) (Hash, bool) {
+	var missing bool
+	contents := d.aterm(false, true, func(drvPath string) string {
+		h, ok := resolve(drvPath)
+		if !ok {
+			missing = true
+		}
+		return h
+	})
+	if missing {
+		return nil, false
+	}
+	return String(contents), true
+}
+
+// DrvPath is the store path of the derivation: the hash of its serialised
+// form together with the store paths it refers to.
+func (d *Derivation) DrvPath() string {
+	contents := d.Unparse()
+	h := String(contents)
+	refs := d.references()
+	typ := "text"
+	for _, r := range refs {
+		typ += ":" + r
+	}
+	return makeStorePathString(typ, h.TypeString(16), d.Name+drvExtension)
+}
+
+// OutputPath is the store path of one output, from the derivation's hash
+// modulo.
+func (d *Derivation) OutputPath(outputName string, hashModulo Hash) string {
+	return makeStorePathString("output:"+outputName, hashModulo.TypeString(16), outputPathName(d.Name, outputName))
+}
+
+// references returns the store paths the derivation depends on: the source
+// paths and the derivation paths of its inputs, in ascending order.
+func (d *Derivation) references() []string {
+	set := make(map[string]struct{}, len(d.InputSrcs)+len(d.InputDrvs))
+	for _, src := range d.InputSrcs {
+		set[src] = struct{}{}
+	}
+	for drvPath := range d.InputDrvs {
+		set[drvPath] = struct{}{}
+	}
+	refs := make([]string, 0, len(set))
+	for r := range set {
+		refs = append(refs, r)
+	}
+	sort.Strings(refs)
+	return refs
+}
+
+// aterm writes the ATerm encoding. maskOutputs blanks the derivation's own
+// output paths and the environment variables named after them, so the result
+// does not depend on those paths; maskInputs substitutes each input
+// derivation path with the hash modulo resolve returns for it.
+func (d *Derivation) aterm(maskOutputs, maskInputs bool, resolve func(drvPath string) string) string {
+	var b strings.Builder
+	b.Grow(1024)
+	b.WriteString("Derive(")
+
+	// Outputs.
+	b.WriteByte('[')
+	for i, name := range sortedKeys(d.Outputs) {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('(')
+		printQuoted(&b, name, false)
+		b.WriteByte(',')
+		if maskOutputs {
+			printQuoted(&b, "", false)
+			b.WriteByte(',')
+			printQuoted(&b, "", false)
+			b.WriteByte(',')
+			printQuoted(&b, "", false)
+		} else {
+			printQuoted(&b, d.Outputs[name].Path, false)
+			b.WriteByte(',')
+			printQuoted(&b, d.Outputs[name].HashAlgo, false)
+			b.WriteByte(',')
+			printQuoted(&b, d.Outputs[name].Hash, false)
+		}
+		b.WriteByte(')')
+	}
+	b.WriteByte(']')
+	b.WriteByte(',')
+
+	// Input derivations.
+	b.WriteByte('[')
+	for i, drvPath := range sortedKeys(d.InputDrvs) {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('(')
+		if maskInputs {
+			h := resolve(drvPath)
+			printQuoted(&b, h, false)
+		} else {
+			printQuoted(&b, drvPath, false)
+		}
+		b.WriteByte(',')
+		b.WriteByte('[')
+		for j, out := range d.InputDrvs[drvPath] {
+			if j > 0 {
+				b.WriteByte(',')
+			}
+			printQuoted(&b, out, false)
+		}
+		b.WriteByte(']')
+		b.WriteByte(')')
+	}
+	b.WriteByte(']')
+	b.WriteByte(',')
+
+	// Source paths.
+	b.WriteByte('[')
+	for i, src := range d.InputSrcs {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		printQuoted(&b, src, false)
+	}
+	b.WriteByte(']')
+	b.WriteByte(',')
+
+	printQuoted(&b, d.System, false)
+	b.WriteByte(',')
+	printQuoted(&b, d.Builder, true)
+	b.WriteByte(',')
+
+	// Arguments.
+	b.WriteByte('[')
+	for i, arg := range d.Args {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		printQuoted(&b, arg, true)
+	}
+	b.WriteByte(']')
+	b.WriteByte(',')
+
+	// Environment.
+	b.WriteByte('[')
+	for i, name := range sortedKeys(d.Env) {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('(')
+		printQuoted(&b, name, true)
+		b.WriteByte(',')
+		value := d.Env[name]
+		if maskOutputs {
+			if _, isOutput := d.Outputs[name]; isOutput {
+				value = ""
+			}
+		}
+		printQuoted(&b, value, true)
+		b.WriteByte(')')
+	}
+	b.WriteByte(']')
+
+	b.WriteByte(')')
+	return b.String()
+}
+
+// printQuoted writes a double-quoted string. escape selects between the two
+// string encodings the ATerm format distinguishes: store paths and output
+// names, drawn from restricted alphabets, are written verbatim, while the
+// builder, its arguments and the environment escape backslashes, quotes and
+// the control characters.
+func printQuoted(b *strings.Builder, s string, escape bool) {
+	b.WriteByte('"')
+	if !escape {
+		b.WriteString(s)
+		b.WriteByte('"')
+		return
+	}
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; c {
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('"')
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func outputPathName(drvName, outputName string) string {
+	if outputName == "out" {
+		return drvName
+	}
+	return drvName + "-" + outputName
+}
+
+// makeStorePathString is Nix's makeStorePath over a pre-rendered type string
+// and hash, for the kinds of path this package computes directly.
+func makeStorePathString(typ, hashHex, name string) string {
+	s := typ + ":" + hashHex + ":" + storeDir + ":" + name
+	return storeDir + "/" + String(s).Compress(20).String(32) + "-" + name
+}
