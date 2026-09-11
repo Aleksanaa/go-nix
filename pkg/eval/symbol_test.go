@@ -14,7 +14,7 @@ func TestStringLiteralsArePreInterned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := newFile(pr, DefaultScope.frame)
+	f := newFile(mainWorker, pr, DefaultScope.frame)
 	var check func(n *p.Node)
 	check = func(n *p.Node) {
 		if n.Type == p.StringNode || n.Type == p.IStringNode {

@@ -8,22 +8,21 @@ import (
 
 // What is true of a node without evaluating it is worked out once, here,
 // before the evaluation starts, rather than the first time each node is
-// reached. The point is not speed — the same work happens either way, and
-// arriving at it lazily spread it over the run — but that the cache against
-// the syntax is then only ever read while evaluating.
+// reached. The resolver needs most of it — where a name reads from, what a
+// group binds — before anything is evaluated, and settling the rest here too
+// means the cache against the syntax is only ever read while evaluating.
 //
-// That matters because several workers will evaluate at once, and they share
-// the syntax and everything cached against it. A cache filled lazily is a
-// cache written concurrently: two workers reaching the same node would race,
-// and `attrs []Sym` is a slice header, so it is a torn read rather than a
-// benign one. Filled in advance, it is immutable and can be read by anyone.
+// That matters because the syntax is shared. A cache filled lazily is a cache
+// written while evaluating: `attrs []Sym` is a slice header, so two evaluations
+// reaching the same node would tear rather than benignly repeat. Filled in
+// advance, it is read-only.
 //
 // What cannot be settled here stays out: the name of an attribute whose name
 // is itself computed, and what a `with` set holds.
 
 // prepare fills in everything about a file's nodes that the syntax decides.
-func (f *file) prepare(base *staticFrame) {
-	pr := &preparer{file: f}
+func (f *file) prepare(w *worker, base *staticFrame) {
+	pr := &preparer{file: f, w: w}
 	// What each node is, first; then where each name in it comes from, which
 	// needs the first pass to have settled what every construct binds.
 	pr.node(f.parser.Result)
@@ -31,7 +30,13 @@ func (f *file) prepare(base *staticFrame) {
 	f.static.sealed = true
 }
 
-type preparer struct{ file *file }
+type preparer struct {
+	file *file
+	// w is the worker the file is being read for. A literal the pass has to
+	// evaluate, or fail on, is evaluated on it, so that the work belongs to
+	// the evaluation that loaded the file.
+	w *worker
+}
 
 func (pr *preparer) entry(n *p.Node) *static { return pr.file.static.get(n.ID) }
 
@@ -104,7 +109,7 @@ func (pr *preparer) name(n *p.Node) Sym {
 // existed.
 func (pr *preparer) literal(n *p.Node, compute func(*worker, string) NixValue) {
 	e := pr.entry(n)
-	val, bad, kind := literalAt(mainWorker, pr.file.parser.TokenString(n.Tokens[0]), compute)
+	val, bad, kind := literalAt(pr.w, pr.file.parser.TokenString(n.Tokens[0]), compute)
 	if bad != "" {
 		e.bad, e.badKind = bad, kind
 		return
@@ -141,7 +146,7 @@ func (pr *preparer) str(n *p.Node) {
 	}
 	var x Expression
 	x.setThunk(&Env{file: pr.file}, n)
-	val := x.evalString(mainWorker)
+	val := x.evalString(pr.w)
 	// The content is fixed by the syntax, so its symbol is too. Interning it
 	// now means a string literal used as an attribute name costs nothing when
 	// the node is reached.

@@ -1,7 +1,6 @@
 package eval
 
 import (
-	"path"
 	"strings"
 
 	"github.com/aleksanaa/go-nix/pkg/source"
@@ -15,11 +14,6 @@ type NixPath struct {
 }
 
 func (p *NixPath) String() string { return p.Path }
-
-// Join extends a path with a relative component, as `./a + "/b"` does.
-func (p *NixPath) Join(s string) *NixPath {
-	return &NixPath{Path: path.Join(p.Path, s)}
-}
 
 // resolvePathLiteral makes a path literal absolute: relative paths against the
 // directory of the file that contains them, <angle> paths through NIX_PATH,

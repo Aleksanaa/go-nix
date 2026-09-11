@@ -112,7 +112,7 @@ func isAlpha(c byte) bool {
 // bSplitVersion implements builtins.splitVersion: the components of a version,
 // alternating runs of digits and of letters.
 func bSplitVersion(w *worker, args ...*Expression) NixValue {
-	comps := splitVersionComponents(assertString(w, args[0].Eval(w)).Content)
+	comps := splitVersion(assertString(w, args[0].Eval(w)).Content)
 	list := make(NixList, len(comps))
 	for i, c := range comps {
 		list[i] = value(w, String(c))
@@ -147,31 +147,6 @@ func bFromTOML(w *worker, args ...*Expression) NixValue {
 func bToXML(w *worker, args ...*Expression) NixValue {
 	w.throwf(ErrEval, "builtins.toXML is not implemented")
 	return Null
-}
-
-func splitVersionComponents(s string) []string {
-	var comps []string
-	i := 0
-	for i < len(s) {
-		for i < len(s) && (s[i] == '.' || s[i] == '-') {
-			i++
-		}
-		if i >= len(s) {
-			break
-		}
-		start := i
-		if isDigit(s[i]) {
-			for i < len(s) && isDigit(s[i]) {
-				i++
-			}
-		} else {
-			for i < len(s) && !isDigit(s[i]) && s[i] != '.' && s[i] != '-' {
-				i++
-			}
-		}
-		comps = append(comps, s[start:i])
-	}
-	return comps
 }
 
 // bGenericClosure implements builtins.genericClosure: the fixpoint of startSet

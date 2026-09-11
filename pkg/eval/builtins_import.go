@@ -46,47 +46,39 @@ func resolveImportFile(w *worker, p string) string {
 	return p
 }
 
-// importFile parses and evaluates the file at p in scope, memoizing the result
-// when memoize is set.
-func importFile(w *worker, p string, scope *Scope, memoize bool) NixValue {
-	if content, ok := corepkgContent(p); ok {
-		// An embedded core package, reached through <nix/...>: it is parsed
-		// from memory, not read from the file system.
-		if memoize {
-			if x, ok := importCache.Load(p); ok {
-				return x.(*Expression).Eval(w)
-			}
-		}
-		pr, err := parser.ParseString(content)
-		if err != nil {
-			w.throwf(ErrEval, "%s", err)
-		}
-		x := delay(w, scope, pr)
-		if memoize {
-			importCache.Store(p, x)
-		}
-		return x.Eval(w)
+// importFile parses and evaluates the file at p in scope. The parse is
+// memoized against the key it was reached at, so the same file imported again
+// is the same value, and a file that imports itself reports the cycle rather
+// than recursing.
+func importFile(w *worker, p string, scope *Scope) NixValue {
+	// An embedded core package, reached through <nix/...>, is parsed from
+	// memory and keyed by its <nix/...> name; anything else is a file on the
+	// file system, keyed by its resolved path.
+	content, embedded := corepkgContent(p)
+	if !embedded {
+		p = resolveImportFile(w, p)
 	}
-	file := resolveImportFile(w, p)
-	if memoize {
-		if x, ok := importCache.Load(file); ok {
-			return x.(*Expression).Eval(w)
-		}
+	if x, ok := importCache.Load(p); ok {
+		return x.(*Expression).Eval(w)
 	}
-	pr, err := parser.ParseFile(file)
+	var pr *parser.Parser
+	var err error
+	if embedded {
+		pr, err = parser.ParseString(content)
+	} else {
+		pr, err = parser.ParseFile(p)
+	}
 	if err != nil {
 		w.throwf(ErrEval, "%s", err)
 	}
 	x := delay(w, scope, pr)
-	if memoize {
-		importCache.Store(file, x)
-	}
+	importCache.Store(p, x)
 	return x.Eval(w)
 }
 
 // bImport implements builtins.import.
 func bImport(w *worker, args ...*Expression) NixValue {
-	return importFile(w, coerceToPath(w, args[0].Eval(w)), w.base, true)
+	return importFile(w, coerceToPath(w, args[0].Eval(w)), w.base)
 }
 
 // bScopedImport implements builtins.scopedImport: import with the attributes
@@ -99,7 +91,7 @@ func bScopedImport(w *worker, args ...*Expression) NixValue {
 	if err != nil {
 		w.throwf(ErrEval, "%s", err)
 	}
-	x := delay(w, w.base.Subscope(scope), pr)
+	x := delay(w, w.base.Subscope(w, scope), pr)
 	return x.Eval(w)
 }
 

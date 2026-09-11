@@ -263,7 +263,8 @@ func applySpine(w *worker, x *Expression, fn NixLambda, args []*Expression) *Exp
 		if args = args[n:]; len(args) == 0 {
 			// The frame points at the function, which says more than its body
 			// would; continuing in place saves the thunk for the body too.
-			x.continueIn(body, parent, blameCall)
+			x.setThunk(parent, body)
+			x.blame = blameCall
 			return nil
 		}
 		// More arguments than this run of functions takes, so the body has to

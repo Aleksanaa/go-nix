@@ -51,19 +51,13 @@ func (env *Env) child(w *worker, n int) *Env {
 	return e
 }
 
-// bind1 nests a frame of one slot, which is what `arg: body` needs. It is the
-// commonest frame there is — every curried function makes one per argument.
+// bind1 nests a frame of one slot, which is what `arg: body` needs, and what a
+// `with` holds its set in. It is the commonest frame there is — every curried
+// function makes one per argument.
 func (env *Env) bind1(w *worker, x *Expression) *Env {
 	e := env.child(w, 1)
 	e.vals[0] = x
 	return e
-}
-
-// withEnv nests a `with`, without forcing the set. The set is only forced when
-// a name is actually looked for in it, so that a fixpoint whose body is
-// `with self; …` does not recurse.
-func (env *Env) withEnv(w *worker, x *Expression) *Env {
-	return env.bind1(w, x)
 }
 
 // out counts n frames outward.
@@ -89,9 +83,9 @@ type Scope struct {
 // ForFile reads a parsed file into this scope, resolving its names against the
 // scope's shape: the default one for an ordinary import, and one of its own for
 // builtins.scopedImport.
-func (s *Scope) ForFile(pr *p.Parser) *Env {
+func (s *Scope) ForFile(w *worker, pr *p.Parser) *Env {
 	e := *s.env
-	e.file = newFile(pr, s.frame)
+	e.file = newFile(w, pr, s.frame)
 	return &e
 }
 
@@ -99,9 +93,9 @@ func (s *Scope) ForFile(pr *p.Parser) *Env {
 // file is read into a scope of its own — builtins.scopedImport. The names are
 // taken as they stand: a scope is what a file is resolved against, so a name
 // bound later needs a scope of its own. See Session for one that grows.
-func (s *Scope) Subscope(binds NixSet) *Scope {
-	set := binds.finish(mainWorker)
-	env := s.env.child(mainWorker, len(set.attrs))
+func (s *Scope) Subscope(w *worker, binds NixSet) *Scope {
+	set := binds.finish(w)
+	env := s.env.child(w, len(set.attrs))
 	for i, a := range set.attrs {
 		env.vals[i] = a.x
 	}

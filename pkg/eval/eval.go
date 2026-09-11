@@ -37,7 +37,7 @@ func EvalIn(scope *Scope, pr *p.Parser) (NixValue, error) {
 // `x = <something that fails>` legal until x is used, just as a `let` is.
 func delay(w *worker, scope *Scope, pr *p.Parser) *Expression {
 	x := w.newExpr()
-	x.setThunk(scope.ForFile(pr), pr.Result)
+	x.setThunk(scope.ForFile(w, pr), pr.Result)
 	return x
 }
 
@@ -107,7 +107,7 @@ func (x *Expression) resolve(w *worker) *Expression {
 		return scope.lookup(w, n)
 
 	case p.ParensNode:
-		x.continueAt(n.Nodes[0], scope)
+		x.setThunk(scope, n.Nodes[0])
 
 	case p.ListNode:
 		list := make(NixList, len(n.Nodes))
@@ -134,21 +134,21 @@ func (x *Expression) resolve(w *worker) *Expression {
 		// The with-set is not forced here: a name is only looked for in it when
 		// the frames do not bind it, and forcing it eagerly makes a fixpoint
 		// whose body is `with self; …` recurse. See Env.fromWith.
-		x.continueAt(n.Nodes[1], scope.withEnv(w, x.WithScoped(w, n.Nodes[0], scope)))
+		x.setThunk(scope.bind1(w, newScoped(w, scope, n.Nodes[0])), n.Nodes[1])
 
 	case p.IfNode:
 		cond := assertBool(w, x.evalNodeAs(w, n.Nodes[0], blameCond))
 		if cond {
-			x.continueAt(n.Nodes[1], scope)
+			x.setThunk(scope, n.Nodes[1])
 		} else {
-			x.continueAt(n.Nodes[2], scope)
+			x.setThunk(scope, n.Nodes[2])
 		}
 
 	case p.AssertNode:
 		if !assertBool(w, x.evalNodeAs(w, n.Nodes[0], blameAssert)) {
 			w.throwf(ErrAssertion, "assertion '%s' failed", x.parser().NodeString(n.Nodes[0]))
 		}
-		x.continueAt(n.Nodes[1], scope)
+		x.setThunk(scope, n.Nodes[1])
 
 	case p.FunctionNode:
 		x.setValue(x.evalFunction(w))
@@ -380,7 +380,7 @@ func (x *Expression) evalBinds(w *worker, nt p.NodeType) {
 	// bindings are thunks, and the body below is only pointed at.
 	set.finishAll(w)
 	if nt == p.LetNode {
-		x.continueAt(n.Nodes[1], env)
+		x.setThunk(env, n.Nodes[1])
 	} else {
 		x.setValue(SetValue(set))
 	}
@@ -393,12 +393,12 @@ func (x *Expression) evalSelect(w *worker, nt p.NodeType) *Expression {
 	attrpath := x.scope().evalAttrPath(w, n.Nodes[1])
 	var or *Expression
 	if nt == p.SelectOrNode {
-		or = x.WithNode(w, n.Nodes[2])
+		or = newScoped(w, x.scope(), n.Nodes[2])
 	}
 	// Only the leading expression is labelled: the attributes selected along
 	// the way are shared with the set that holds them, and already carry their
 	// own label.
-	expr := x.WithNode(w, n.Nodes[0]).blaming(blameSelect)
+	expr := newScoped(w, x.scope(), n.Nodes[0]).blaming(blameSelect)
 	for _, sym := range attrpath {
 		// As in Nix, `or` also covers selecting from a non-set.
 		val := expr.Eval(w)
@@ -428,7 +428,8 @@ func (x *Expression) evalSelect(w *worker, nt p.NodeType) *Expression {
 // afresh on each call, and rebuilding the formal-argument map with it was one
 // of the largest sources of allocation in the evaluator.
 func (x *Expression) evalFunction(w *worker) NixValue {
-	return LambdaValue(w, &NixExprLambda{lambdaInfo: x.scope().lambdaInfo(w, x.node()), Env: x.scope()})
+	scope := x.scope()
+	return LambdaValue(w, &NixExprLambda{lambdaInfo: scope.lambdaInfo(w, x.node()), Env: scope})
 }
 
 // lambdaInfo describes a function node: the names it binds and where its body

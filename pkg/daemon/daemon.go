@@ -144,8 +144,6 @@ func (c *Conn) postHandshake() {
 	}
 	if c.version >= 1<<8|33 {
 		c.flush()
-	}
-	if c.version >= 1<<8|33 {
 		c.daemonVersion = c.getString()
 	}
 	if c.version >= 1<<8|35 {
@@ -355,12 +353,6 @@ func (c *Conn) getStrings() []string {
 
 // getMessage reads one stderr message tag.
 func (c *Conn) getMessage() uint64 { return c.getUint64() }
-
-func (c *Conn) fail(err error) {
-	if c.err == nil {
-		c.err = err
-	}
-}
 
 // cause returns the sticky error and clears it.
 func (c *Conn) cause() error {

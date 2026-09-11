@@ -45,7 +45,14 @@ func Resolve(base, s string) string {
 }
 
 func searchPath(name string) string {
-	for _, pair := range NixPath {
+	return lookupPath(name, NixPath, Exists)
+}
+
+// lookupPath looks a name up in a split NIX_PATH, calling exists to decide
+// whether a candidate is there. A pair with no name matches every path, joined
+// onto it; a named pair matches its name and everything under it.
+func lookupPath(name string, nixpath [][2]string, exists func(string) bool) string {
+	for _, pair := range nixpath {
 		k, v := pair[0], pair[1]
 		var r string
 		switch {
@@ -56,7 +63,7 @@ func searchPath(name string) string {
 		default:
 			continue
 		}
-		if Exists(r) {
+		if exists(r) {
 			return r
 		}
 	}

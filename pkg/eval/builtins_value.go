@@ -160,30 +160,26 @@ func bDeepSeq(w *worker, args ...*Expression) NixValue {
 // sets and lists already walked, so a value that reaches back to itself is not
 // walked again.
 func deepForce(w *worker, val NixValue, seen map[unsafe.Pointer]bool) {
-	var key unsafe.Pointer
 	switch val.Kind() {
 	case KindList:
 		l := val.List()
 		if len(l) == 0 {
 			return
 		}
-		key = unsafe.Pointer(&l[0])
-	case KindSet:
-		key = val.ptr
-	default:
-		return
-	}
-	if seen[key] {
-		return
-	}
-	seen[key] = true
-
-	switch val.Kind() {
-	case KindList:
-		for _, x := range val.List() {
+		key := unsafe.Pointer(&l[0])
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		for _, x := range l {
 			deepForce(w, x.Eval(w), seen)
 		}
 	case KindSet:
+		key := val.ptr
+		if seen[key] {
+			return
+		}
+		seen[key] = true
 		for _, a := range val.Set().attrs {
 			deepForce(w, a.x.Eval(w), seen)
 		}

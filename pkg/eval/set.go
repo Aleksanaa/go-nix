@@ -53,18 +53,6 @@ func (s *AttrSet) Len() int {
 	return len(s.attrs)
 }
 
-// values is the expressions this set binds, for the places that force every
-// one of them — deepSeq and toJSON — where it is the set's counterpart to a
-// list's elements. What a set's values are, unlike its names, is not decided
-// until the set is built, so this copies rather than caching.
-func (s *AttrSet) values() []*Expression {
-	xs := make([]*Expression, len(s.attrs))
-	for i, a := range s.attrs {
-		xs[i] = a.x
-	}
-	return xs
-}
-
 // cmpSym orders attributes by symbol, which is the order they are kept in.
 // Symbols are interned in first-seen order, so this is not alphabetical; what
 // has to be read alphabetically asks Keys.
@@ -120,34 +108,6 @@ func (s *AttrSet) Get(sym Sym) (*Expression, bool) {
 func (s *AttrSet) Has(sym Sym) bool {
 	_, ok := s.Get(sym)
 	return ok
-}
-
-// at returns the attribute in slot i when that is the one named sym. It is
-// how a lookup that remembers where a name was last found checks that it is
-// still looking at the right one.
-func (s *AttrSet) at(i int32, sym Sym) (*Expression, bool) {
-	if s == nil || !s.sorted || i < 0 || int(i) >= len(s.attrs) || s.attrs[i].sym != sym {
-		return nil, false
-	}
-	return s.attrs[i].x, true
-}
-
-// getSlot is Get, also reporting which slot the name was found in so that a
-// lookup can go straight back to it next time. A set still being built has no
-// settled slots, and reports -1.
-func (s *AttrSet) getSlot(sym Sym) (*Expression, int32, bool) {
-	if s == nil {
-		return nil, -1, false
-	}
-	for i := range s.attrs {
-		if s.attrs[i].sym == sym {
-			if !s.sorted {
-				return s.attrs[i].x, -1, true
-			}
-			return s.attrs[i].x, int32(i), true
-		}
-	}
-	return nil, -1, false
 }
 
 // Keys returns the attribute names in the order Nix presents them:

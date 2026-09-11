@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -359,23 +360,10 @@ func addInputs(w *worker, drv *nixhash.Derivation, context []stringContext) {
 	// paths are kept sorted and unique.
 	for drvPath, outs := range drv.InputDrvs {
 		sort.Strings(outs)
-		drv.InputDrvs[drvPath] = slicesCompact(outs)
+		drv.InputDrvs[drvPath] = slices.Compact(outs)
 	}
 	sort.Strings(drv.InputSrcs)
-	drv.InputSrcs = slicesCompact(drv.InputSrcs)
-}
-
-func slicesCompact(s []string) []string {
-	if len(s) <= 1 {
-		return s
-	}
-	out := s[:1]
-	for _, x := range s[1:] {
-		if x != out[len(out)-1] {
-			out = append(out, x)
-		}
-	}
-	return out
+	drv.InputSrcs = slices.Compact(drv.InputSrcs)
 }
 
 // derivationClosure returns every store path reachable from a derivation, in

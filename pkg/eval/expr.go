@@ -81,7 +81,7 @@ type Expression struct {
 	// ends the force is what keeps that call to two words — the worker has to
 	// be one of them, and a third was worth 2-4% of a run. It is int16
 	// because the depth is bounded by maxCallDepth, which leaves the room the
-	// claim below needs without widening the thunk.
+	// state below needs without widening the thunk.
 	depth int16
 
 	// state is how far this thunk has been forced: see stateFree below. It
@@ -103,9 +103,9 @@ func (x *Expression) Val() NixValue {
 // what this expression is.
 func (x *Expression) setValue(v NixValue) {
 	x.a, x.b, x.num, x.kind = v.ptr, nil, v.num, v.kind
-	// Publishing the value is also what releases the claim, and in that order:
-	// a worker that sees this store sees the fields written above it.
-	x.publish()
+	// Having the value is also what ends the force: the mark release would
+	// take off is replaced by the value itself.
+	x.state = stateForced
 }
 
 // scope is the scope an unforced expression evaluates in.
@@ -154,19 +154,6 @@ const exprSlabSize = 2048
 // the scope rather than stored per expression, of which there are far more.
 func (x *Expression) parser() *p.Parser {
 	return x.scope().parser()
-}
-
-// WithNode derives an unevaluated expression for a sibling node, in the same
-// scope.
-func (x *Expression) WithNode(w *worker, n *p.Node) *Expression {
-	y := w.newExpr()
-	y.setThunk(x.scope(), n)
-	return y
-}
-
-// WithScoped derives an unevaluated expression for a node in a new scope.
-func (x *Expression) WithScoped(w *worker, n *p.Node, scope *Env) *Expression {
-	return newScoped(w, scope, n)
 }
 
 // newScoped is an unevaluated expression for a node in a scope.
@@ -264,11 +251,10 @@ func (f evalFrame) traceFrame() Frame {
 
 // Eval forces the expression to a value, memoizing the result.
 func (x *Expression) Eval(w *worker) NixValue {
-	// The claim is what says whether there is a value, rather than the kind:
-	// it is the word the worker that forced this thunk published through, and
-	// reading the value without reading that word first would be reading
-	// fields another worker may still be writing.
-	if x.forced() {
+	// The state says whether there is a value, rather than the kind: a thunk
+	// that has been forced to no value at all — `null` — is KindNull, and one
+	// that has not been forced is KindNone only until resolve writes to it.
+	if x.state == stateForced {
 		return x.Val()
 	}
 	return x.force(w)
@@ -291,11 +277,14 @@ type evalFrame struct {
 }
 
 func (x *Expression) force(w *worker) NixValue {
-	// Claim the thunk, so that of two workers forcing it one does the work and
-	// the other waits. With one worker this is a load, a compare and a store.
-	if !x.claim(w) {
-		return x.Val()
+	// Mark the thunk as being forced, which is what an expression defined in
+	// terms of itself runs into instead of descending for ever. Eval only
+	// calls force for a thunk that has no value yet, so a thunk already marked
+	// is one whose value is defined in terms of itself.
+	if x.state == stateForcing {
+		w.throwf(ErrInfiniteRecursion, "infinite recursion encountered")
 	}
+	x.state = stateForcing
 
 	depth := w.depth
 	x.depth = int16(depth)
@@ -356,19 +345,6 @@ func (x *Expression) force(w *worker) NixValue {
 	return x.Val()
 }
 
-// continueAt points the expression at the node to evaluate in its place, in
-// the scope that node belongs in. force picks it up from there.
-func (x *Expression) continueAt(n *p.Node, scope *Env) {
-	x.setThunk(scope, n)
-}
-
-// continueIn is continueAt for a node the backtrace should describe, such as
-// the body of a call.
-func (x *Expression) continueIn(n *p.Node, scope *Env, kind blameKind) {
-	x.continueAt(n, scope)
-	x.blame = kind
-}
-
 // finish leaves the expression, whether it produced a value or is being
 // unwound past by a failure, dropping every frame it pushed and taking the
 // forcing mark off if the value has not already replaced it.
@@ -379,9 +355,11 @@ func (x *Expression) continueIn(n *p.Node, scope *Env, kind blameKind) {
 // arithmetic-heavy expression allocate nothing per operand.
 func (x *Expression) finish(w *worker) {
 	w.depth = int(x.depth)
-	// Unmark the force, unless the value already did: setValue publishes, so
-	// this only does anything when a failure is unwinding past the force.
-	x.release()
+	// Take the forcing mark off, unless the value already replaced it: this
+	// only does anything when a failure is unwinding past the force.
+	if x.state == stateForcing {
+		x.state = stateFree
+	}
 }
 
 // value wraps an already known value as an evaluated expression.
@@ -439,10 +417,10 @@ func (x *Expression) evalNodeAs(w *worker, n *p.Node, kind blameKind) NixValue {
 
 // take makes this expression stand for what src stands for.
 //
-// It is a field-by-field copy rather than an assignment because an expression
-// carries the claim on itself, and a claim belongs to the expression it was
-// made on: src is a scratch expression on the Go stack that nobody else can
-// reach, and this one is fresh and unclaimed, which is what it must stay.
+// It is a field-by-field copy rather than an assignment because the forcing
+// state belongs to the expression it was marked on: src is a scratch
+// expression on the Go stack that nobody else can reach, and this one is fresh
+// and unmarked, which is what it must stay.
 func (x *Expression) take(src *Expression) {
 	x.a, x.b, x.num = src.a, src.b, src.num
 	x.kind, x.blame, x.depth = src.kind, src.blame, src.depth
@@ -460,36 +438,6 @@ const (
 	stateForcing              // a force is under way
 	stateForced               // the value is in hand
 )
-
-// forced reports whether this expression has its value.
-func (x *Expression) forced() bool { return x.state == stateForced }
-
-// publish records that the value written above it is the value.
-func (x *Expression) publish() { x.state = stateForced }
-
-// release takes the mark off a force that produced no value, which is what a
-// failure unwinding past one leaves behind. It does nothing once the value has
-// been published: a value never becomes unforced.
-func (x *Expression) release() {
-	if x.state == stateForcing {
-		x.state = stateFree
-	}
-}
-
-// claim marks this thunk as being forced, reporting false when it already has
-// a value and there is nothing to force. A thunk already being forced is one
-// whose value is defined in terms of itself.
-func (x *Expression) claim(w *worker) bool {
-	switch x.state {
-	case stateFree:
-		x.state = stateForcing
-		return true
-	case stateForced:
-		return false
-	}
-	w.throwf(ErrInfiniteRecursion, "infinite recursion encountered")
-	return false
-}
 
 // sameThunk reports whether two places hold the very same thunk, which makes
 // what they hold equal without forcing it or looking at it.

@@ -83,9 +83,9 @@ type static struct {
 type staticStore struct {
 	entries []static
 	// sealed says the pass has finished and nothing may write here again.
-	// Evaluation only reads what is known about the syntax, so that several
-	// workers can read it at once; this is what catches a write that slips
-	// back in.
+	// Evaluation only reads what is known about the syntax, so any write that
+	// slips back in is a bug; this catches it rather than a corruption that
+	// only shows up later.
 	sealed bool
 }
 
@@ -117,13 +117,13 @@ type file struct {
 
 // newFile binds a parse to the facts worked out about its nodes. The parser
 // counted them, so the array they go in is allocated once, at the right size.
-func newFile(pr *p.Parser, base *staticFrame) *file {
+func newFile(w *worker, pr *p.Parser, base *staticFrame) *file {
 	f := &file{
 		parser: pr,
 		static: staticStore{entries: make([]static, pr.NodeCount())},
 		dir:    source.Dir(source.Abs(pr.Path())),
 	}
-	f.prepare(base)
+	f.prepare(w, base)
 	return f
 }
 
@@ -197,9 +197,9 @@ func (env *Env) literalExpr(w *worker, n *p.Node) *Expression {
 
 // cache records the value of a literal that the pass works out, and refuses to
 // once the pass is done. The pass evaluates every string with nothing
-// interpolated into it, so evaluation never reaches this; if it ever does, the
-// cache is being written while workers may be reading it, and saying so here
-// is better than a race that only shows up under load.
+// interpolated into it, so evaluation never reaches this; if it ever does, a
+// write is reaching the syntax cache while it may be read, and saying so here
+// is better than a corruption that only shows up later.
 func (e *static) cache(f *file, val NixValue) {
 	if f.static.sealed {
 		panic("eval: the cache against the syntax was written while evaluating")

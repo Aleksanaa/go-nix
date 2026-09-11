@@ -3,6 +3,8 @@ package nixhash
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -100,17 +102,6 @@ type Derivation struct {
 // Unparse serialises the derivation in Nix's ATerm format.
 func (d *Derivation) Unparse() string { return d.aterm(false, false, nil) }
 
-// UnparseModulo serialises the derivation with its outputs blanked and its
-// input derivation paths replaced by their hashes modulo, which resolve looks
-// up by derivation path. It is the form a derivation hashes to when its own
-// output paths are being computed.
-func (d *Derivation) UnparseModulo(resolve func(drvPath string) (string, bool)) string {
-	return d.aterm(true, true, func(drvPath string) string {
-		h, _ := resolve(drvPath)
-		return h
-	})
-}
-
 // OutputHash is the hash modulo used to compute the derivation's own output
 // paths: the SHA-256 of UnparseModulo. The second result is false when an
 // input derivation's hash is not known, which resolve reports.
@@ -196,7 +187,7 @@ func (d *Derivation) aterm(maskOutputs, maskInputs bool, resolve func(drvPath st
 
 	// Outputs.
 	b.WriteByte('[')
-	for i, name := range sortedKeys(d.Outputs) {
+	for i, name := range slices.Sorted(maps.Keys(d.Outputs)) {
 		if i > 0 {
 			b.WriteByte(',')
 		}
@@ -232,7 +223,7 @@ func (d *Derivation) aterm(maskOutputs, maskInputs bool, resolve func(drvPath st
 			h := resolve(drvPath)
 			byHash[h] = append(byHash[h], outs...)
 		}
-		for i, h := range sortedKeys(byHash) {
+		for i, h := range slices.Sorted(maps.Keys(byHash)) {
 			if i > 0 {
 				b.WriteByte(',')
 			}
@@ -242,7 +233,7 @@ func (d *Derivation) aterm(maskOutputs, maskInputs bool, resolve func(drvPath st
 			b.WriteByte('[')
 			outs := byHash[h]
 			sort.Strings(outs)
-			outs = compact(outs)
+			outs = slices.Compact(outs)
 			for j, out := range outs {
 				if j > 0 {
 					b.WriteByte(',')
@@ -253,7 +244,7 @@ func (d *Derivation) aterm(maskOutputs, maskInputs bool, resolve func(drvPath st
 			b.WriteByte(')')
 		}
 	} else {
-		for i, drvPath := range sortedKeys(d.InputDrvs) {
+		for i, drvPath := range slices.Sorted(maps.Keys(d.InputDrvs)) {
 			if i > 0 {
 				b.WriteByte(',')
 			}
@@ -303,7 +294,7 @@ func (d *Derivation) aterm(maskOutputs, maskInputs bool, resolve func(drvPath st
 
 	// Environment.
 	b.WriteByte('[')
-	for i, name := range sortedKeys(d.Env) {
+	for i, name := range slices.Sorted(maps.Keys(d.Env)) {
 		if i > 0 {
 			b.WriteByte(',')
 		}
@@ -354,29 +345,6 @@ func printQuoted(b *strings.Builder, s string, escape bool) {
 		}
 	}
 	b.WriteByte('"')
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// compact removes adjacent duplicates from a sorted slice.
-func compact(s []string) []string {
-	if len(s) <= 1 {
-		return s
-	}
-	out := s[:1]
-	for _, x := range s[1:] {
-		if x != out[len(out)-1] {
-			out = append(out, x)
-		}
-	}
-	return out
 }
 
 func outputPathName(drvName, outputName string) string {

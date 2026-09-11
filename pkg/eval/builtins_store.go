@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"slices"
 	"sort"
 	"strings"
 
@@ -41,7 +42,7 @@ func bToFile(w *worker, args ...*Expression) NixValue {
 		}
 	}
 	sort.Strings(refs)
-	refs = slicesCompact(refs)
+	refs = slices.Compact(refs)
 
 	storePath := nixhash.TextStorePath(name, contents.Content, refs)
 	return StrValue(stringWithContext(storePath, stringContext{path: storePath}))
@@ -148,6 +149,5 @@ func bUnsafeDiscardStringContext(w *worker, args ...*Expression) NixValue {
 // bHasContext implements builtins.hasContext: whether a string refers to any
 // derivation or store path.
 func bHasContext(w *worker, args ...*Expression) NixValue {
-	str := assertString(w, args[0].Eval(w))
-	return Bool(str.extra != nil && len(str.extra.Context) != 0)
+	return Bool(hasContext(assertString(w, args[0].Eval(w))))
 }
