@@ -35,7 +35,14 @@ func Marshal(v any) ([]byte, error) {
 // [stdjson.Marshaler].
 type Float float64
 
-func (f Float) MarshalJSON() ([]byte, error) { return []byte(FormatFloat(float64(f))), nil }
+func (f Float) MarshalJSON() ([]byte, error) {
+	// nlohmann::json writes non-finite numbers as null, since JSON has no
+	// way to represent them.
+	if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
+		return []byte("null"), nil
+	}
+	return []byte(FormatFloat(float64(f))), nil
+}
 
 // FormatFloat is nlohmann's to_chars: the shortest round-trip digits from Go,
 // laid out by nlohmann's format_buffer rules (fixed for a decimal point in

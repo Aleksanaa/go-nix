@@ -39,11 +39,12 @@ func TestMarshal(t *testing.T) {
 }
 
 func TestFloatMarshal(t *testing.T) {
-	got, err := Marshal([]any{Float(1), Float(1.5)})
+	// nlohmann::json writes non-finite floats as null; JSON cannot hold them.
+	got, err := Marshal([]any{Float(1), Float(1.5), Float(math.Inf(1)), Float(math.Inf(-1)), Float(math.NaN())})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `[1.0,1.5]`
+	want := `[1.0,1.5,null,null,null]`
 	if string(got) != want {
 		t.Errorf("Marshal = %s, want %s", got, want)
 	}
