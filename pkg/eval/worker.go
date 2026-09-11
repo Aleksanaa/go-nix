@@ -8,26 +8,11 @@ import "unsafe"
 // out of. Everything else — values, thunks, scopes, the facts cached against
 // syntax — belongs to the evaluation itself and is shared.
 //
-// It is gathered into one place so that there can be more than one of it.
-// Evaluation is still single-goroutine and there is still exactly one worker;
-// what changes is that no part of the evaluator now names a package variable
-// to find this state, which is the first thing standing between here and
-// forcing thunks in parallel. See PLAN.md, phase D.
+// It is gathered into one place rather than kept in package variables, so that
+// nothing in the evaluator reaches past the worker it was handed. Evaluation
+// runs on one goroutine; this is what an evaluation would be threaded through
+// if it ever ran on more than one.
 type worker struct {
-	// id names this worker among all that are evaluating at once. It is what
-	// a thunk records when it is claimed, so that the worker holding it can be
-	// told apart from the ones waiting on it.
-	id uint32
-
-	// budget is how many workers this one may still split its work across.
-	// Halving it on every fork is what keeps a recursion forking near its top
-	// and running whole further down; see Expression.operands.
-	budget int
-
-	// wait is what this worker is blocked on, when it is. It is read by other
-	// workers looking for a cycle among the ones waiting; see deadlock.go.
-	wait waitState
-
 	// stack holds the expressions currently being forced, innermost last. It
 	// is what an error is annotated from: throwf reads the position and the
 	// backtrace off it at the point of failure, so that unwinding stays a
@@ -50,8 +35,8 @@ type worker struct {
 	// id, for the file the worker is currently in. It cannot live against the
 	// syntax the way the rest of what is known about a node does: the slot it
 	// names is a position in a set built at run time, so it is a fact about
-	// this evaluation rather than about the source. Keeping it per worker is
-	// what lets several of them look names up at once.
+	// this evaluation rather than about the source, and so belongs to whoever
+	// is doing it.
 	//
 	// One file is in hand at a time — the chain of a single evaluation stays
 	// in the file it started in — so the current one is cached and the rest
@@ -74,23 +59,11 @@ type worker struct {
 	base *Scope
 }
 
-// w is the worker every evaluation runs on. Phase D replaces it with one per
-// goroutine, threaded rather than named; until then the indirection is the
-// whole of the change, and is measured.
+// mainWorker is the worker every evaluation runs on.
 var mainWorker = newWorker()
 
-// newWorker makes a worker with an id of its own. The id is the slot it takes
-// in the registry, handed out there rather than from a counter of its own: a
-// claim on a thunk names its owner by id, and an id that does not match the
-// slot names the wrong worker.
-func newWorker() *worker {
-	w := &worker{}
-	w.id = registerWorker(w)
-	if w.id == 0 || w.id == stateForced {
-		panic("eval: ran out of worker ids")
-	}
-	return w
-}
+// newWorker makes a worker to evaluate on.
+func newWorker() *worker { return &worker{} }
 
 // newExpr returns a zeroed expression from the block being handed out.
 func (w *worker) newExpr() *Expression {
@@ -144,19 +117,3 @@ func (w *worker) enterFile(f *file) {
 	}
 	w.memoFile, w.memo = f, m
 }
-
-// parallel says whether more than one worker may be evaluating. It starts
-// false and is turned on, once, by goParallel — at the moment a fork is about
-// to happen and not before.
-//
-// It exists because the claim on a thunk is only worth synchronising when
-// there is somebody to synchronise with. Publishing a value with an atomic
-// store costs about a tenth of a run — on amd64 it is a locked exchange, and
-// it happens once per force — and buys nothing at all while one goroutine is
-// doing everything. With one worker the claim word is touched plainly; with
-// several, every touch is atomic, so all of them agree.
-//
-// Mixing the two is safe because the switch happens while there is still only
-// one goroutine, and starting one orders everything written before it against
-// everything the new one reads. See goParallel.
-var parallel bool

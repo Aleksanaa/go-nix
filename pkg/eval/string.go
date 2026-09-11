@@ -2,7 +2,6 @@ package eval
 
 import (
 	"strings"
-	"sync/atomic"
 )
 
 // NixString is a string together with the build inputs it references.
@@ -17,25 +16,18 @@ type NixString struct {
 	// attrNames hands them out, getAttr and `.${name}` look them up — and
 	// interning the same content over again was the largest cost of an
 	// attribute-heavy evaluation.
-	// It is read and written atomically: a string is a value like any other,
-	// so two workers can hold the same one and both want its name.
 	sym   int32
 	extra *stringExtra
 }
 
 // intern returns the symbol naming this string's content, interning it at
 // most once per string.
-//
-// Two workers can hold the same string and both ask, so the cache is read and
-// written atomically. Which of them wins does not matter: interning the same
-// content twice gives the same symbol, so the loser stores what the winner
-// stored.
 func (str *NixString) intern() Sym {
-	if sym := atomic.LoadInt32(&str.sym); sym != 0 {
-		return Sym(sym)
+	if str.sym != 0 {
+		return Sym(str.sym)
 	}
 	sym := Intern(str.Content)
-	atomic.StoreInt32(&str.sym, int32(sym))
+	str.sym = int32(sym)
 	return sym
 }
 

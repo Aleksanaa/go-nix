@@ -2,8 +2,6 @@ package eval
 
 import (
 	"fmt"
-	"runtime"
-	"sync/atomic"
 	"unsafe"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
@@ -86,24 +84,14 @@ type Expression struct {
 	// claim below needs without widening the thunk.
 	depth int16
 
-	// state is the claim on this thunk: zero while it is free to force, the
-	// owning worker's id while one is forcing it, and stateForced once it has
-	// its value. It is claimed by compare-and-swap, so that of two workers
-	// forcing the same thunk one wins and the other waits for the value; and
-	// it lives in the thunk rather than in a table beside it, because anything
-	// the heap can reach holding an *Expression would make every operand
-	// escape to the heap.
-	//
-	// Being forced is a state of this word rather than of kind because this is
-	// the word every reader synchronises on: the fields of a value are written
-	// plainly and published by the store below, so a reader that has not seen
-	// that store has no business reading them.
-	state uint32
+	// state is how far this thunk has been forced: see stateFree below. It
+	// lives in the thunk rather than in a table beside it, because anything the
+	// heap can reach holding an *Expression would make every operand escape to
+	// the heap. It is a state of its own rather than of kind so that a thunk
+	// under way is told apart from one that has not been touched, which is what
+	// catches a value defined in terms of itself.
+	state uint8
 }
-
-// stateForced is the claim on a thunk that has been forced. No worker has it
-// as an id, and nothing releases it: a value never becomes unforced.
-const stateForced = ^uint32(0)
 
 // Val is the value this expression has been forced to, or no value at all.
 func (x *Expression) Val() NixValue {
@@ -210,8 +198,8 @@ func (x *Expression) blamingAttr(sym Sym) *Expression {
 		// The pass settled the name for every attribute the syntax names
 		// outright, so this is a load and a compare; only a computed name is
 		// ever stored, and then only the first time the group is evaluated.
-		if e := x.scope().file.static.get(n.ID); e.attrSym.Load() != int32(sym) {
-			e.attrSym.Store(int32(sym))
+		if e := x.scope().file.static.get(n.ID); e.attrSym != int32(sym) {
+			e.attrSym = int32(sym)
 		}
 	}
 	return x
@@ -261,7 +249,7 @@ func (f evalFrame) traceFrame() Frame {
 	if f.node != nil && f.scope != nil {
 		e := f.scope.file.static.get(f.node.ID)
 		if f.blame == blameAttr {
-			sym = Sym(e.attrSym.Load())
+			sym = Sym(e.attrSym)
 		}
 		if f.blame == blameCall && e.owner != nil && pr != nil {
 			pos = pr.NodePos(e.owner)
@@ -382,22 +370,18 @@ func (x *Expression) continueIn(n *p.Node, scope *Scope, kind blameKind) {
 }
 
 // finish leaves the expression, whether it produced a value or is being
-// unwound past by a failure, dropping every frame it pushed and releasing the
-// claim if the value has not already done so.
+// unwound past by a failure, dropping every frame it pushed and taking the
+// forcing mark off if the value has not already replaced it.
 //
 // The expression is the deferred call's receiver rather than something the
 // worker holds: a pointer to it reachable from the heap would make every
 // operand escape, and operands staying on the Go stack is what lets an
 // arithmetic-heavy expression allocate nothing per operand.
 func (x *Expression) finish(w *worker) {
-	// The depth is read before the claim is given up, not after: releasing it
-	// lets another worker claim the thunk and write its own depth there, and
-	// this one would then restore a stack position that was never its own.
 	w.depth = int(x.depth)
-	// Release the claim, unless the value already released it: setValue
-	// publishes and releases in the same store, so this only does anything
-	// when the force is being unwound past by a failure.
-	x.release(w)
+	// Unmark the force, unless the value already did: setValue publishes, so
+	// this only does anything when a failure is unwinding past the force.
+	x.release()
 }
 
 // value wraps an already known value as an evaluated expression.
@@ -489,115 +473,45 @@ func (x *Expression) take(src *Expression) {
 	x.kind, x.blame, x.depth = src.kind, src.blame, src.depth
 }
 
-// The claim word, read and written as the mode requires. See parallel.
-
-// forced reports whether this expression has its value. It is the only test
-// for that: the fields of a value are written plainly and published by the
-// store below, so a reader that has not seen the store must not read them.
+// The forcing state of a thunk.
 //
-// This is the one place that does not ask which mode it is in, because an
-// atomic load costs nothing to ask for — on amd64 it is the same instruction
-// as a plain one — and this is read far more often than a thunk is forced.
-func (x *Expression) forced() bool {
-	return atomic.LoadUint32(&x.state) == stateForced
-}
+// A thunk being forced is marked before its value is worked out, so that an
+// expression whose value is defined in terms of itself is met as a mark that
+// is already set rather than as an endless descent. Nix calls this
+// blackholing; the mark is what stands in the thunk while the value does not
+// exist yet.
+const (
+	stateFree    uint8 = iota // nothing has forced it
+	stateForcing              // a force is under way
+	stateForced               // the value is in hand
+)
 
-// publish releases the claim and makes the value visible, in that order.
-func (x *Expression) publish() {
-	if parallel {
-		atomic.StoreUint32(&x.state, stateForced)
-		return
-	}
-	x.state = stateForced
-}
+// forced reports whether this expression has its value.
+func (x *Expression) forced() bool { return x.state == stateForced }
 
-// release gives up a claim that produced no value, which is what a failure
-// unwinding past a force leaves behind. It does nothing once the value has
-// released the claim itself.
-func (x *Expression) release(w *worker) {
-	if parallel {
-		atomic.CompareAndSwapUint32(&x.state, w.id, 0)
-		return
-	}
-	if x.state == w.id {
-		x.state = 0
+// publish records that the value written above it is the value.
+func (x *Expression) publish() { x.state = stateForced }
+
+// release takes the mark off a force that produced no value, which is what a
+// failure unwinding past one leaves behind. It does nothing once the value has
+// been published: a value never becomes unforced.
+func (x *Expression) release() {
+	if x.state == stateForcing {
+		x.state = stateFree
 	}
 }
 
-// claim takes this thunk for w, reporting false when it already has a value
-// and there is nothing to force. A thunk this worker already holds is one
-// whose value is defined in terms of itself; a thunk another worker holds is
-// waited for, since only one of them should do the work.
-//
-// The one case worth any speed is the ordinary one — one worker, a thunk
-// nobody has touched — so that is all this does, and the rest is out of line
-// where it does not cost the caller an inlining budget it cannot afford.
+// claim marks this thunk as being forced, reporting false when it already has
+// a value and there is nothing to force. A thunk already being forced is one
+// whose value is defined in terms of itself.
 func (x *Expression) claim(w *worker) bool {
-	if !parallel && x.state == 0 {
-		x.state = w.id
+	switch x.state {
+	case stateFree:
+		x.state = stateForcing
 		return true
+	case stateForced:
+		return false
 	}
-	return x.claimSlow(w)
+	w.throwf(ErrInfiniteRecursion, "infinite recursion encountered")
+	return false
 }
-
-func (x *Expression) claimSlow(w *worker) bool {
-	if !parallel {
-		if x.state == stateForced {
-			return false
-		}
-		w.throwf(ErrInfiniteRecursion, "infinite recursion encountered")
-	}
-	for !atomic.CompareAndSwapUint32(&x.state, 0, w.id) {
-		switch atomic.LoadUint32(&x.state) {
-		case stateForced:
-			return false
-		case w.id:
-			w.throwf(ErrInfiniteRecursion, "infinite recursion encountered")
-		}
-		// Another worker is forcing it. Wait for it to publish a value, or to
-		// let go without one, which is what a failure does.
-		//
-		// The wait is recorded while it lasts, so that a worker waiting on us
-		// can see it: two workers each holding what the other waits for are a
-		// value defined in terms of itself, and get the error one worker would
-		// have got outright. Looking for that is not free, so it is done every
-		// so often rather than every turn — a cycle that is there stays there.
-		if x.waitFor(w) {
-			return false
-		}
-	}
-	return true
-}
-
-// waitFor blocks until the thunk is forced or released by whoever holds it,
-// reporting true if it came back with a value.
-//
-// The wait is recorded while it lasts — as whose claim it is behind, never as
-// the thunk itself; see waitState — so that a worker waiting on us can see it.
-// Two workers each holding what the other waits for are a value defined in
-// terms of itself, and get the error one worker would have got outright.
-// Looking for that is not free, so it is done every so often rather than every
-// turn: a cycle that is there stays there.
-func (x *Expression) waitFor(w *worker) bool {
-	defer w.wait.end()
-	for turn := 0; ; turn++ {
-		held := atomic.LoadUint32(&x.state)
-		switch held {
-		case stateForced:
-			return true
-		case 0:
-			// Free again and still without a value: the worker that had it
-			// failed, so the caller should try to claim it itself.
-			return false
-		}
-		w.wait.begin(held)
-		if turn%waitTurnsPerCheck == waitTurnsPerCheck-1 && w.waitingWouldCycle(held) {
-			w.throwf(ErrInfiniteRecursion, "infinite recursion encountered")
-		}
-		runtime.Gosched()
-	}
-}
-
-// waitTurnsPerCheck is how many times a wait goes round before looking for a
-// cycle among the workers waiting.
-const waitTurnsPerCheck = 32

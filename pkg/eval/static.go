@@ -3,7 +3,6 @@ package eval
 import (
 	"slices"
 	"strconv"
-	"sync/atomic"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 	"github.com/aleksanaa/go-nix/pkg/source"
@@ -38,14 +37,8 @@ type static struct {
 	//
 	// It is the one thing here that evaluation can still write: an attribute
 	// whose name is itself computed is only named once the group is evaluated.
-	// Atomic so that workers evaluating the same group agree, and because a
-	// name settled by the pass is never written again — the store is guarded
-	// by a load, so the ordinary case is a read.
-	attrSym atomic.Int32
-	// recursive marks an application that calls the function it is written
-	// inside. It is what decides whether the work is worth handing to another
-	// worker; see preparer.selfCalls.
-	recursive bool
+	// A name the pass settled is never written again.
+	attrSym int32
 	// bad is why the pass could not make sense of this node, raised if and
 	// when the node is evaluated so that the failure keeps its backtrace.
 	bad string

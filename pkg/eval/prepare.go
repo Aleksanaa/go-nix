@@ -131,9 +131,8 @@ func (pr *preparer) str(n *p.Node) {
 	x.setThunk(&Scope{file: pr.file}, n)
 	val := x.evalString(mainWorker)
 	// The content is fixed by the syntax, so its symbol is too. Interning it
-	// now means a string literal used as an attribute name is a read, not a
-	// write, when workers evaluate it in parallel — the same value is shared
-	// by everyone who reaches the node.
+	// now means a string literal used as an attribute name costs nothing when
+	// the node is reached.
 	val.Str().intern()
 }
 
@@ -152,7 +151,7 @@ func (pr *preparer) attrPath(n *p.Node) {
 
 // binds records, for the value of each binding, the name it is bound to, which
 // is what a backtrace calls the frame. A computed name is not known here; it is
-// filled in as the group is evaluated, which is why attrSym is atomic.
+// filled in as the group is evaluated.
 func (pr *preparer) binds(bindNodes []*p.Node) {
 	for _, c := range bindNodes {
 		switch c.Type {
@@ -161,14 +160,11 @@ func (pr *preparer) binds(bindNodes []*p.Node) {
 			last := path[len(path)-1]
 			if last.Type == p.IDNode {
 				sym := pr.name(last)
-				pr.entry(c.Nodes[1]).attrSym.Store(int32(sym))
-				if len(path) == 1 {
-					pr.selfCalls(sym, c.Nodes[1])
-				}
+				pr.entry(c.Nodes[1]).attrSym = int32(sym)
 			}
 		case p.InheritNode:
 			for _, id := range c.Nodes[0].Nodes {
-				pr.entry(id).attrSym.Store(int32(pr.name(id)))
+				pr.entry(id).attrSym = int32(pr.name(id))
 			}
 		}
 	}
@@ -203,7 +199,7 @@ func (pr *preparer) lambda(n *p.Node) {
 					// names it after the formal, exactly as the evaluator will
 					// when it binds one. Settled here so evaluation never
 					// writes it.
-					pr.entry(def).attrSym.Store(int32(sym))
+					pr.entry(def).attrSym = int32(sym)
 				}
 				if _, dup := fn.Formal[sym]; dup {
 					e.bad = dupFormal(sym)
@@ -228,64 +224,4 @@ func (pr *preparer) lambda(n *p.Node) {
 
 func dupFormal(sym Sym) string {
 	return "duplicate formal function argument '" + sym.String() + "'"
-}
-
-// selfCalls marks every application inside a binding's value that calls the
-// binding itself — a recursive call, which is the shape that divides work in
-// two and so the only one worth handing to another worker.
-//
-// Whether an application is worth forking is not otherwise readable from the
-// syntax: `count (k - 1)` and `builtins.getAttr name set` are both a call in
-// an operand, and the first is half of a recursion tree while the second is
-// over before a goroutine could be started for it. What tells them apart is
-// that the first one reaches the function it is written inside.
-//
-// It stops where the name is bound again, so a shadowed name is not mistaken
-// for the binding; and it only ever says yes to a name it is sure of, since
-// what it decides is how the evaluation is scheduled, not what it means.
-func (pr *preparer) selfCalls(sym Sym, n *p.Node) {
-	if n == nil {
-		return
-	}
-	switch n.Type {
-	case p.ApplyNode:
-		// `f a b` nests to the left, so the function is the innermost head.
-		head := n.Nodes[0]
-		for head.Type == p.ApplyNode {
-			head = head.Nodes[0]
-		}
-		if head.Type == p.IDNode && pr.name(head) == sym {
-			pr.entry(n).recursive = true
-		}
-	case p.FunctionNode:
-		// An argument of the same name is a different binding from here down.
-		for _, c := range n.Nodes[:len(n.Nodes)-1] {
-			if c.Type == p.IDNode && pr.name(c) == sym {
-				return
-			}
-			if c.Type == p.ArgSetNode {
-				for _, arg := range c.Nodes {
-					if len(arg.Nodes) > 0 && pr.name(arg.Nodes[0]) == sym {
-						return
-					}
-				}
-			}
-		}
-	case p.LetNode, p.RecSetNode:
-		binds := n.Nodes
-		if n.Type == p.LetNode {
-			binds = n.Nodes[0].Nodes
-		}
-		for _, c := range binds {
-			if c.Type != p.BindNode {
-				continue
-			}
-			if path := c.Nodes[0].Nodes; path[0].Type == p.IDNode && pr.name(path[0]) == sym {
-				return
-			}
-		}
-	}
-	for _, c := range n.Nodes {
-		pr.selfCalls(sym, c)
-	}
 }

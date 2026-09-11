@@ -3,8 +3,6 @@ package eval
 import (
 	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
 )
 
 // Sym is an interned name. It is int32 so that it packs into the tail of an
@@ -12,47 +10,30 @@ import (
 type Sym int32
 
 // Symtab interns names, so that equal names are equal symbols and can be
-// compared by identity. One table is shared by every evaluation, and workers
-// evaluating in parallel intern the names they compute — an attribute name
-// built at run time, a key read out of JSON.
-//
-// Two things in it are read differently often. The map from name to symbol is
-// only touched by Intern, which is rare: the names the syntax gives are
-// interned by the pass before any worker runs, so only computed names reach it
-// during evaluation, and a mutex is enough. The slice from symbol back to name
-// is read for every name rendered — attrNames alone renders one per attribute
-// — so it is published with an atomic pointer and read without a lock: a
-// reader that held the previous slice still finds every symbol that existed
-// then, since Intern only ever appends.
+// compared by identity. One table is shared by every evaluation: the names the
+// syntax gives are interned by the pass before evaluation begins, and only a
+// name computed at run time — an attribute name built out of an
+// interpolation, a key read out of JSON — reaches it during one.
 type Symtab struct {
-	mu    sync.Mutex
 	syms  map[string]Sym
-	names atomic.Pointer[[]string]
+	names []string
 }
 
 func NewSymtab() *Symtab {
-	st := &Symtab{syms: map[string]Sym{"": 0}}
-	names := []string{""}
-	st.names.Store(&names)
-	return st
+	return &Symtab{syms: map[string]Sym{"": 0}, names: []string{""}}
 }
 
 func (st *Symtab) Intern(name string) Sym {
-	st.mu.Lock()
-	defer st.mu.Unlock()
 	if sym, ok := st.syms[name]; ok {
 		return sym
 	}
-	names := append(*st.names.Load(), name)
-	sym := Sym(len(names) - 1)
+	st.names = append(st.names, name)
+	sym := Sym(len(st.names) - 1)
 	st.syms[name] = sym
-	st.names.Store(&names)
 	return sym
 }
 
-func (st *Symtab) Name(sym Sym) string {
-	return (*st.names.Load())[sym]
-}
+func (st *Symtab) Name(sym Sym) string { return st.names[sym] }
 
 // TODO: Not capable of multiple (large?) files?
 var globalSymtab = NewSymtab()

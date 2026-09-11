@@ -7,13 +7,13 @@ import (
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
-// TestPreparedCacheIsReadOnly is the milestone of phase D1: what is cached
+// TestPreparedCacheIsReadOnly pins that what is cached
 // against the syntax is settled before the evaluation starts and never written
-// again, so that workers evaluating at once can all read it.
+// again, so that every evaluation reads the same facts.
 //
 // The one exception is an attribute whose name is itself computed, which is
-// only known once the group is evaluated; that field is atomic, and the second
-// case below is what pins the exception to exactly that field.
+// only known once the group is evaluated; the second case below is what pins
+// the exception to exactly that field.
 func TestPreparedCacheIsReadOnly(t *testing.T) {
 	for _, src := range []string{
 		`let f = x: x + 1; g = { a, b ? 2, ... }: a + b; in
@@ -78,9 +78,8 @@ func TestInvalidLiteralKeepsPosition(t *testing.T) {
 	}
 }
 
-// staticSnap is what is compared before and after an evaluation: the fields
-// of a static entry, with the one atomic read out to a plain int rather than
-// copied (the entry cannot be copied, since the atomic must not be).
+// staticSnap is what is compared before and after an evaluation: the fields of
+// a static entry, copied out so that the two can be told apart.
 type staticSnap struct {
 	val     NixValue
 	expr    *Expression
@@ -128,7 +127,7 @@ func snap(entries []static) []staticSnap {
 		s[i] = staticSnap{
 			val: e.val, expr: e.expr, lambda: e.lambda, attrs: e.attrs,
 			owner: e.owner, sym: e.sym, bad: e.bad, badKind: e.badKind,
-			attrSym: e.attrSym.Load(),
+			attrSym: e.attrSym,
 		}
 	}
 	return s
