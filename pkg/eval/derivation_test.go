@@ -302,3 +302,97 @@ func TestStructuredAttrs(t *testing.T) {
 		}
 	})
 }
+
+// TestDerivationLaziness pins that builtins.derivation, like derivation.nix,
+// only builds the derivation when an output path is read. Evaluating the result
+// set or reading a plain attribute must not force the attributes that go into
+// the derivation, while reading an output path must.
+func TestDerivationLaziness(t *testing.T) {
+	const thrown = `builtins.derivation { name = "x"; builder = "/bin/sh"; system = "x86_64-linux"; fixupPhase = throw "boom"; }`
+
+	for _, test := range [][2]string{
+		{`builtins.isAttrs (` + thrown + `)`, `true`},
+		{`(` + thrown + `).name`, `"x"`},
+		{`builtins.length (` + thrown + `).all`, `1`},
+		{`builtins.attrNames (` + thrown + `)`,
+			`[ "all" "builder" "drvAttrs" "drvPath" "fixupPhase" "name" "out" "outPath" "outputName" "system" "type" ]`},
+	} {
+		got, err := evalPrint(t, test[0])
+		if err != nil {
+			t.Errorf("%s: %v", test[0], err)
+			continue
+		}
+		if got != test[1] {
+			t.Errorf("%s: got %s, want %s", test[0], got, test[1])
+		}
+	}
+
+	// Reading an output path does build the derivation, so the throwing
+	// attribute is forced and the error surfaces.
+	for _, src := range []string{
+		`(` + thrown + `).drvPath`,
+		`(` + thrown + `).outPath`,
+		`(` + thrown + `).out.outPath`,
+	} {
+		if _, err := EvalString(src); err == nil {
+			t.Errorf("%s: expected an error, got nil", src)
+		}
+	}
+
+	// derivationStrict is a primop and stays eager.
+	if _, err := EvalString(`builtins.derivationStrict { name = "x"; builder = "/bin/sh"; system = "x86_64-linux"; fixupPhase = throw "boom"; }`); err == nil {
+		t.Error("derivationStrict: expected an error, got nil")
+	}
+}
+
+// TestDerivationOutputs covers the output names derivation.nix reads straight
+// from the `outputs` attribute, and the rejection of an empty set.
+func TestDerivationOutputs(t *testing.T) {
+	got, err := evalPrint(t, `builtins.attrNames (builtins.derivation {
+		name = "x"; builder = "/bin/sh"; system = "x86_64-linux"; outputs = [ "out" "dev" ];
+	})`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[ "all" "builder" "dev" "drvAttrs" "drvPath" "name" "out" "outPath" "outputName" "outputs" "system" "type" ]`
+	if got != want {
+		t.Errorf("attrNames = %s, want %s", got, want)
+	}
+
+	got, err = evalPrint(t, `(builtins.derivation {
+		name = "x"; builder = "/bin/sh"; system = "x86_64-linux"; outputs = [ "out" "dev" ];
+	}).dev.outPath`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"/nix/store/3qb5aqi3wxx9cipz0418a9w1nvqjsx4m-x-dev"`; got != want {
+		t.Errorf("dev.outPath = %s, want %s", got, want)
+	}
+
+	if _, err := EvalString(`builtins.derivation { name = "x"; builder = "/bin/sh"; system = "x86_64-linux"; outputs = []; }`); err == nil {
+		t.Error("empty outputs: expected an error, got nil")
+	}
+}
+
+// TestMakeOverridableLazyDerivation pins that accessing .override on a
+// makeOverridable package does not build the base derivation.
+// makeOverridable forces `result // { override = ...; }`, so the base set must
+// not force its attributes; the derivation.nix wrapper is what makes that hold.
+func TestMakeOverridableLazyDerivation(t *testing.T) {
+	got, err := evalPrint(t, `
+		let
+			makeOverridable = f: origArgs:
+				let result = f origArgs;
+				in result // { override = newArgs: makeOverridable f (origArgs // newArgs); };
+			f = { runtimeShell }: builtins.derivation {
+				name = "x"; builder = "/bin/sh"; system = "x86_64-linux"; fixupPhase = runtimeShell;
+			};
+			base = makeOverridable f { runtimeShell = throw "base"; };
+		in (base.override { runtimeShell = "overridden"; }).drvPath`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"/nix/store/kx4gsxgmw028pwsk3qf08vv298r2wa0i-x.drv"`; got != want {
+		t.Errorf("drvPath = %s, want %s", got, want)
+	}
+}

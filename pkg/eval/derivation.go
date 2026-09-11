@@ -60,6 +60,9 @@ func lookupDerivation(drvPath string) *Derivation {
 // DerivationOf returns the derivation a value names, or nil when it is not
 // one. It is how a caller outside the package — the CLI — turns an evaluated
 // derivation back into the object whose store paths and JSON it can read.
+//
+// The drvPath of a builtins.derivation result is lazy, so reading it builds
+// the derivation; a value that cannot produce one is simply not a derivation.
 func DerivationOf(val NixValue) *Derivation {
 	if val.Kind() != KindSet {
 		return nil
@@ -68,7 +71,11 @@ func DerivationOf(val NixValue) *Derivation {
 	if !ok {
 		return nil
 	}
-	if v := x.Val(); v.Kind() == KindString {
+	v, err := catching(func() NixValue { return x.Eval(mainWorker) })
+	if err != nil {
+		return nil
+	}
+	if v.Kind() == KindString {
 		return lookupDerivation(v.Str().Content)
 	}
 	return nil
@@ -410,15 +417,28 @@ func bDerivationStrict(w *worker, args ...*Expression) NixValue {
 	return derivationStrictSet(w, derivationStrictInternal(w, attrs))
 }
 
-// bDerivation implements builtins.derivation, which is derivationStrict
-// wrapped so that the result is an ordinary-looking set: every attribute the
-// caller passed in, plus type, drvPath, outPath and outputName, plus one
-// attribute per output and an all list, exactly as derivation.nix composes
-// them.
+// bDerivation implements builtins.derivation, which derivation.nix wraps
+// around derivationStrict. The result is an ordinary-looking set: every
+// attribute the caller passed in, plus type, drvPath, outPath and outputName,
+// plus one attribute per output and an all list. As in derivation.nix, the
+// derivation itself is only built when an output path is read, so evaluating
+// the set or looking at its attribute names must not force every attribute.
 func bDerivation(w *worker, args ...*Expression) NixValue {
 	attrs := assertSet(w, args[0].Eval(w))
-	d := derivationStrictInternal(w, attrs)
-	outputs := d.outputs
+	outputs := derivationOutputNames(w, attrs)
+
+	// strict stands for `derivationStrict attrs`: it is forced at most once,
+	// and only when an output path is read.
+	strict := thunk(w, func(w *worker) NixValue {
+		return derivationStrictSet(w, derivationStrictInternal(w, attrs))
+	})
+	strictAttr := func(w *worker, sym Sym) NixValue {
+		x, ok := strict.Eval(w).Set().Get(sym)
+		if !ok {
+			w.throwf(ErrEval, "attribute '%s' missing", sym)
+		}
+		return x.Eval(w)
+	}
 
 	// The per-output sets refer to each other and to the common attributes, so
 	// they are filled in after the common set is finished, and read through
@@ -448,13 +468,36 @@ func bDerivation(w *worker, args ...*Expression) NixValue {
 	common.finish(w)
 
 	for i, o := range outputs {
+		out := o
 		extra := NewSet(4)
-		extra.Bind1(symOutPath, value(w, StrValue(outputString(d, o))))
-		extra.Bind1(symDrvPath, value(w, StrValue(drvPathString(d))))
+		extra.Bind1(symOutPath, thunk(w, func(w *worker) NixValue {
+			return strictAttr(w, Intern(out))
+		}))
+		extra.Bind1(symDrvPath, thunk(w, func(w *worker) NixValue {
+			return strictAttr(w, symDrvPath)
+		}))
 		extra.Bind1(symType, value(w, String("derivation")))
-		extra.Bind1(symOutputName, value(w, String(o)))
+		extra.Bind1(symOutputName, value(w, String(out)))
 		elem[i] = common.Update(extra.finish(w))
 	}
 
 	return SetValue(elem[0])
+}
+
+// derivationOutputNames reads the output names the way derivation.nix does,
+// straight from the `outputs` attribute and defaulting to a single "out".
+func derivationOutputNames(w *worker, attrs *AttrSet) []string {
+	x, ok := attrs.Get(symOutputs)
+	if !ok {
+		return []string{"out"}
+	}
+	list := assertList(w, x.Eval(w))
+	if len(list) == 0 {
+		w.throwf(ErrEval, "derivation cannot have an empty set of outputs")
+	}
+	outputs := make([]string, len(list))
+	for i, el := range list {
+		outputs[i] = assertString(w, el.Eval(w)).Content
+	}
+	return outputs
 }
