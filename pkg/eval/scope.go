@@ -75,7 +75,10 @@ func (scope *Scope) Subscope1(w *worker, sym Sym, x *Expression) *Scope {
 // scope of an evaluation is made from the shared DefaultScope.
 func (scope *Scope) ForFile(pr *p.Parser) *Scope {
 	s := *scope
-	s.file = newFile(pr)
+	// The file is resolved against the scope it is about to be evaluated in,
+	// which is the default one for an ordinary import and a scope of its own
+	// for builtins.scopedImport.
+	s.file = newFile(pr, frameOfScope(scope))
 	return &s
 }
 
@@ -167,6 +170,9 @@ func (scope *Scope) lookupLexicalFrom(sym Sym) (x *Expression, hops, slot int32,
 // evaluation. See lookupMemo.
 func (scope *Scope) lookupNode(w *worker, n *p.Node) (Sym, *Expression, bool) {
 	sym := scope.file.static.get(n.ID).sym
+	if checkResolve {
+		scope.checkAgainstSearch(n, sym)
+	}
 	m := w.remember(scope.file, n.ID)
 	if m.hops < 0 {
 		// Nothing in the chain binds this name lexically, which the syntax
@@ -360,7 +366,18 @@ func (scope *Scope) lookupBorrow(w *worker, n *p.Node) (*Expression, bool) {
 			continue
 		}
 		if !set.sorted {
-			return set.bound(sym)
+			if y, ok := set.bound(sym); ok {
+				return y, true
+			}
+			// Not bound yet. If the syntax says the group binds this name
+			// further down, there is nothing to borrow and nothing further out
+			// may be looked at either: what is out there is what this group
+			// shadows. If the group binds no such name, it is somebody else's
+			// and the search goes on.
+			if set.group == 0 || scope.file.static.get(set.group).binds(sym) {
+				return nil, false
+			}
+			continue
 		}
 		if y, _, found := set.getSlot(sym); found {
 			return y, true

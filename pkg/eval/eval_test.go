@@ -710,13 +710,11 @@ func TestSharedThunkEquality(t *testing.T) {
 		// is false there too.
 		{`let f = x: x; in f == f`, `false`},
 		{`(x: x) == (x: x)`, `false`},
-		// A group still being built does not borrow from outside itself: with
-		// nothing bound yet it cannot tell a name it will bind further down
-		// from one it never will, and looking outward would find the binding it
-		// shadows. So this is false here and true in Nix, which knows the names
-		// a group binds before it evaluates any of them — its env is a slot per
-		// name, sized by the parser. Closing it means knowing the same thing.
-		{`let f = x: x; in rec { a = f; } == rec { a = f; }`, `false`},
+		// A group still being built borrows from outside itself, because the
+		// pass has already said which names the group binds: one that is none
+		// of them belongs further out and is safe to take.
+		{`let f = x: x; in rec { a = f; } == rec { a = f; }`, `true`},
+		{`let f = x: x; in rec { a = f; b = 1; } == rec { a = f; b = 1; }`, `true`},
 		// A name the group does bind is not borrowed before it is bound, which
 		// is what Nix's unfilled slot comes to as well.
 		{`let f = x: x; in rec { a = b; b = f; } == rec { a = b; b = f; }`, `false`},

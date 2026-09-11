@@ -1,6 +1,8 @@
 package eval
 
 import (
+	"slices"
+
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
@@ -22,9 +24,12 @@ import (
 // itself computed.
 
 // prepare fills in everything about a file's nodes that the syntax decides.
-func (f *file) prepare() {
+func (f *file) prepare(base *staticFrame) {
 	pr := &preparer{file: f}
+	// What each node is, first; then where each name in it comes from, which
+	// needs the first pass to have settled what every construct binds.
 	pr.node(f.parser.Result)
+	pr.resolve(f.parser.Result, base)
 	f.static.sealed = true
 }
 
@@ -59,10 +64,14 @@ func (pr *preparer) node(n *p.Node) {
 	case p.FunctionNode:
 		pr.lambda(n)
 
-	case p.SetNode, p.RecSetNode:
+	case p.SetNode:
 		pr.binds(n.Nodes)
+	case p.RecSetNode:
+		pr.binds(n.Nodes)
+		pr.entry(n).group = pr.groupNames(n.Nodes)
 	case p.LetNode:
 		pr.binds(n.Nodes[0].Nodes)
+		pr.entry(n).group = pr.groupNames(n.Nodes[0].Nodes)
 	}
 	for _, c := range n.Nodes {
 		pr.node(c)
@@ -224,4 +233,39 @@ func (pr *preparer) lambda(n *p.Node) {
 
 func dupFormal(sym Sym) string {
 	return "duplicate formal function argument '" + sym.String() + "'"
+}
+
+// groupNames is the names a binding group binds outright, in order, so that a
+// lookup can ask whether a name is one of them.
+//
+// Only the names the syntax gives are here. A computed one is not known until
+// the group is evaluated, and is not in scope of the group's own bindings
+// either — `rec { ${k} = 1; b = ???; }` cannot name it — so leaving it out is
+// what the language says as well as what the pass can do.
+func (pr *preparer) groupNames(bindNodes []*p.Node) []Sym {
+	var syms []Sym
+	add := func(sym Sym) {
+		if i, found := slices.BinarySearch(syms, sym); !found {
+			syms = slices.Insert(syms, i, sym)
+		}
+	}
+	for _, c := range bindNodes {
+		switch c.Type {
+		case p.BindNode:
+			// The first component is what the group binds; the rest name
+			// attributes of the set it binds, which are not in scope here.
+			if path := c.Nodes[0].Nodes; len(path) > 0 && path[0].Type == p.IDNode {
+				add(pr.name(path[0]))
+			}
+		case p.InheritNode:
+			for _, id := range c.Nodes[0].Nodes {
+				add(pr.name(id))
+			}
+		case p.InheritFromNode:
+			for _, id := range c.Nodes[1].Nodes {
+				add(pr.name(id))
+			}
+		}
+	}
+	return syms
 }

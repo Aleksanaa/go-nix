@@ -32,6 +32,16 @@ type static struct {
 	// attrs is what an attribute path of plain identifiers names, which does
 	// not change between evaluations.
 	attrs []Sym
+	// group is the names a binding group binds outright, in order, for a `let`
+	// or a recursive set — the ones its own bindings are in scope of. A name
+	// the syntax does not give, because it is computed, is not among them and
+	// is not in scope of the group either, which is what Nix does too.
+	//
+	// It is what lets a group still being built say that a name is none of its
+	// own, so that a binding may borrow one from further out while the group
+	// it is in has bound almost nothing yet. Nix reads the same fact off an env
+	// whose slots the parser counted; here the pass counts them instead.
+	group []Sym
 	// attrSym is the name of the attribute whose value this node is, for the
 	// backtrace frame that says which attribute failed.
 	//
@@ -53,6 +63,21 @@ type static struct {
 	// component. The zero Sym is the empty name, which no identifier has, so
 	// it doubles as "not computed yet".
 	sym Sym
+
+	// up and slot are where an identifier reads its value from: up frames out
+	// from the one it is evaluated in, in that frame's slot. A slot of noSlot
+	// means no construct binds the name, and up counts to the nearest `with`
+	// instead, whose set may have it.
+	//
+	// On a `with` node they say the same about the next `with` outwards, so
+	// that a name the nearer one does not have can be looked for in the next.
+	// See resolve.go.
+	up   int32
+	slot int32
+	// withNode is the `with` whose set may hold this name, or zero when a
+	// construct binds it outright. It is what makes the chain of `with`s
+	// walkable from a name that is in none of them yet.
+	withNode uint32
 }
 
 type staticStore struct {
@@ -92,13 +117,13 @@ type file struct {
 
 // newFile binds a parse to the facts worked out about its nodes. The parser
 // counted them, so the array they go in is allocated once, at the right size.
-func newFile(pr *p.Parser) *file {
+func newFile(pr *p.Parser, base *staticFrame) *file {
 	f := &file{
 		parser: pr,
 		static: staticStore{entries: make([]static, pr.NodeCount())},
 		dir:    source.Dir(source.Abs(pr.Path())),
 	}
-	f.prepare()
+	f.prepare(base)
 	return f
 }
 
@@ -186,4 +211,11 @@ func (e *static) cache(f *file, val NixValue) {
 		panic("eval: the cache against the syntax was written while evaluating")
 	}
 	e.val = val
+}
+
+// binds reports whether a binding group binds this name outright. A node that
+// is not a group binds nothing, which is what an empty list says.
+func (e *static) binds(sym Sym) bool {
+	_, found := slices.BinarySearch(e.group, sym)
+	return found
 }

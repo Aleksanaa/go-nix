@@ -22,6 +22,12 @@ type AttrSet struct {
 	// binary searches. A set being built is not: names are appended and the
 	// whole thing is put in order once, when the set is finished.
 	sorted bool
+	// group is the node of the binding group this set is being built for, while
+	// it is being built, so that a lookup can ask the syntax which names the
+	// group binds before the set holds them. It is zero for a set that is not
+	// one — a plain `{ ... }`, a set built by a builtin — and it fits in the
+	// padding the fields above leave, so it costs nothing.
+	group uint32
 }
 
 // NixSet is how a set is passed around: always by pointer, so that a value
@@ -415,4 +421,11 @@ func (s *AttrSet) bound(sym Sym) (*Expression, bool) {
 		}
 	}
 	return nil, false
+}
+
+// size returns the set, having recorded which binding group is building it.
+// The group is what a lookup asks about a name the set does not hold yet.
+func (s *AttrSet) building(node uint32) *AttrSet {
+	s.group = node
+	return s
 }

@@ -205,7 +205,11 @@ func newDefaultScope(w *worker) *Scope {
 
 	builtinsSet.Bind1(symBuiltins, value(w, SetValue(builtinsSet)))
 	mainSet.Bind1(symBuiltins, value(w, SetValue(builtinsSet)))
-	s := &Scope{bound: unsafe.Pointer(mainSet.finish(w))}
+	main := mainSet.finish(w)
+	// The resolver needs the same names, in the same slots, to settle what a
+	// file's free names refer to before it is evaluated.
+	baseFrame = frameOfSet(main)
+	s := &Scope{bound: unsafe.Pointer(main)}
 	// The default scope is also where an import evaluates its file, which the
 	// worker carries so that a builtin need not name it before it exists.
 	w.base = s

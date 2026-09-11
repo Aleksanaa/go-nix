@@ -290,8 +290,11 @@ func (x *Expression) evalBinds(w *worker, nt p.NodeType) {
 	set := NewSet(len(bindNodes))
 	scope := x.scope()
 	if nt == p.RecSetNode || nt == p.LetNode {
-		// A recursive set and a `let` are in scope of their own bindings.
-		scope = scope.subscope(w, set, false)
+		// A recursive set and a `let` are in scope of their own bindings. The
+		// set records which group is building it, so that a binding looking a
+		// name up while the group is half built can tell one of the group's own
+		// names from one that belongs further out.
+		scope = scope.subscope(w, set.building(n.ID), false)
 	}
 	for _, c := range bindNodes {
 		switch c.Type {
