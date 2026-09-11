@@ -89,6 +89,7 @@ type staticSnap struct {
 	owner   *p.Node
 	sym     Sym
 	bad     string
+	badKind ErrorKind
 	attrSym int32
 }
 
@@ -126,7 +127,7 @@ func snap(entries []static) []staticSnap {
 		e := &entries[i]
 		s[i] = staticSnap{
 			val: e.val, expr: e.expr, lambda: e.lambda, attrs: e.attrs,
-			owner: e.owner, sym: e.sym, bad: e.bad,
+			owner: e.owner, sym: e.sym, bad: e.bad, badKind: e.badKind,
 			attrSym: e.attrSym.Load(),
 		}
 	}
@@ -150,6 +151,8 @@ func diffStatic(a, b *staticSnap) string {
 		return "sym"
 	case a.bad != b.bad:
 		return "bad"
+	case a.badKind != b.badKind:
+		return "badKind"
 	case a.attrSym != b.attrSym:
 		return "attrSym"
 	}

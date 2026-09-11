@@ -92,9 +92,9 @@ func (pr *preparer) name(n *p.Node) Sym {
 // existed.
 func (pr *preparer) literal(n *p.Node, compute func(*worker, string) NixValue) {
 	e := pr.entry(n)
-	val, bad := literalAt(mainWorker, pr.file.parser.TokenString(n.Tokens[0]), compute)
+	val, bad, kind := literalAt(mainWorker, pr.file.parser.TokenString(n.Tokens[0]), compute)
 	if bad != "" {
-		e.bad = bad
+		e.bad, e.badKind = bad, kind
 		return
 	}
 	e.val = val
@@ -103,19 +103,19 @@ func (pr *preparer) literal(n *p.Node, compute func(*worker, string) NixValue) {
 }
 
 // literalAt works out a literal's value, catching the failure an out-of-range
-// number is so that the caller can defer it. Only the message is kept: a
-// literal raises one kind, ErrSyntax, and nothing else.
-func literalAt(w *worker, s string, compute func(*worker, string) NixValue) (val NixValue, bad string) {
+// number or a missing <path> is so that the caller can defer it. The message
+// and its kind are kept, so the re-raise preserves them.
+func literalAt(w *worker, s string, compute func(*worker, string) NixValue) (val NixValue, bad string, kind ErrorKind) {
 	defer func() {
 		if r := recover(); r != nil {
 			if err := asEvalError(r); err != nil {
-				bad = err.Msg
+				bad, kind = err.Msg, err.Kind
 				return
 			}
 			panic(r)
 		}
 	}()
-	return compute(w, s), ""
+	return compute(w, s), "", ErrEval
 }
 
 // str works out a string with nothing interpolated into it, which is a literal

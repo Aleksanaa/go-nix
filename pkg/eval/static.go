@@ -49,6 +49,10 @@ type static struct {
 	// bad is why the pass could not make sense of this node, raised if and
 	// when the node is evaluated so that the failure keeps its backtrace.
 	bad string
+	// badKind is the kind of the failure in bad, kept so the re-raise can
+	// preserve it: a missing <path> is a thrown error, an out-of-range
+	// number a syntax error.
+	badKind ErrorKind
 	// owner is the function a body node belongs to, which is where a call's
 	// frame points.
 	owner *p.Node
@@ -115,7 +119,8 @@ func uriLiteral(w *worker, s string) NixValue { return String(s) }
 func (pr *preparer) pathLiteral(w *worker, s string) NixValue {
 	r := resolvePathLiteral(pr.file.dir, s)
 	if r == "" {
-		w.throwf(ErrSyntax, "file '%s' was not found in the Nix search path (add it using $NIX_PATH or -I)", s[1:len(s)-1])
+		// Nix raises this as a ThrownError, so tryEval catches it.
+		w.throwf(ErrThrown, "file '%s' was not found in the Nix search path (add it using $NIX_PATH or -I)", s[1:len(s)-1])
 	}
 	return PathValue(&NixPath{Path: r})
 }
@@ -156,7 +161,7 @@ func (scope *Scope) literalValue(w *worker, n *p.Node) (NixValue, bool) {
 func (scope *Scope) literal(w *worker, n *p.Node) NixValue {
 	e := scope.file.static.get(n.ID)
 	if e.bad != "" {
-		w.throwf(ErrSyntax, "%s", e.bad)
+		w.throwf(e.badKind, "%s", e.bad)
 	}
 	return e.val
 }
@@ -173,7 +178,7 @@ func (scope *Scope) name(n *p.Node) Sym {
 func (scope *Scope) literalExpr(w *worker, n *p.Node) *Expression {
 	e := scope.file.static.get(n.ID)
 	if e.bad != "" {
-		w.throwf(ErrSyntax, "%s", e.bad)
+		w.throwf(e.badKind, "%s", e.bad)
 	}
 	return e.expr
 }
