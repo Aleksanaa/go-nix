@@ -213,6 +213,11 @@ func TestEvalErrors(t *testing.T) {
 		{`1 / 0`, `division by zero`},
 		{`{ a = 1; a = 2; }`, `attribute 'a' already defined`},
 		{`{ a = 1; a.b = 2; }`, `attribute 'a' already defined`},
+		// A set and a path that share a prefix merge, but a repeated leaf does
+		// not, and neither does a set with a non-set.
+		{`{ a.b = 1; a.b = 2; }`, `attribute 'a.b' already defined`},
+		{`{ a = { b = 1; }; a.b = 2; }`, `attribute 'a.b' already defined`},
+		{`{ a = { b = 1; }; a = { b = 2; }; }`, `attribute 'a.b' already defined`},
 		{`let a = a; in a`, `infinite recursion encountered`},
 		{`let a = b; b = a; in a`, `infinite recursion encountered`},
 		{`rec { a = b; b = a; }.a`, `infinite recursion encountered`},
@@ -235,6 +240,39 @@ func TestEvalErrors(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), test[1]) {
 			t.Errorf("%s\n got: %v\nwant it to contain: %s", test[0], err, test[1])
+		}
+	}
+}
+
+// TestAttrPathMerge covers how the parser merges bindings that define the same
+// attribute through a path and through a set literal. Nix merges the sets, so
+// `{ a = { b = 1; }; a.c = 2; }` is `{ a = { b = 1; c = 2; }; }`; only a
+// repeated leaf is a duplicate.
+func TestAttrPathMerge(t *testing.T) {
+	for _, test := range [][2]string{
+		{`{ a.b = 1; a.c = 2; }`, `{ a = { b = 1; c = 2; }; }`},
+		{`{ a = { b = 1; }; a.c = 2; }`, `{ a = { b = 1; c = 2; }; }`},
+		{`{ a = { b = 1; }; a = { c = 2; }; }`, `{ a = { b = 1; c = 2; }; }`},
+		{`{ a.b = 1; a = { c = 2; }; }`, `{ a = { b = 1; c = 2; }; }`},
+		{`{ a.b.c = 1; a.b.d = 2; }`, `{ a = { b = { c = 1; d = 2; }; }; }`},
+		{`{ a.b = { x = 1; }; a.b.c = 2; }`, `{ a = { b = { c = 2; x = 1; }; }; }`},
+		{`{ passthru.tests = { a = 1; }; passthru.tests.b = 2; }`,
+			`{ passthru = { tests = { a = 1; b = 2; }; }; }`},
+		// A recursive set merges the same way, and the merged bindings can
+		// still refer to the set being defined.
+		{`rec { a = { b = 1; }; a.c = 2; }`, `{ a = { b = 1; c = 2; }; }`},
+		{`rec { a = { b = a.c; }; a.c = 2; }.a.b`, `2`},
+		{`let a.b = 1; a.c = 2; in a`, `{ b = 1; c = 2; }`},
+		// Merging is structural: it must not force a binding that stays unused.
+		{`{ a = { b = throw "boom"; }; a.c = 1; }.a.c`, `1`},
+	} {
+		got, err := evalPrint(t, test[0])
+		if err != nil {
+			t.Errorf("%s: %v", test[0], err)
+			continue
+		}
+		if got != test[1] {
+			t.Errorf("%s: got %s, want %s", test[0], got, test[1])
 		}
 	}
 }

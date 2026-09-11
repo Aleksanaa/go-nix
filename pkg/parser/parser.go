@@ -120,6 +120,9 @@ func parse(lr *lexResult) (p *Parser, err error) {
 	yyErrorVerbose = true
 	yyParse(p)
 	if len(p.errors) == 0 {
+		p.normalize(p.Result)
+	}
+	if len(p.errors) == 0 {
 		return
 	}
 	err = p.errors
