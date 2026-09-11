@@ -53,6 +53,13 @@ func FixedOutputInputHash(method, hashAlgo, hashBase16, outPath string) string {
 	return String("fixed:out:" + algo + ":" + hashBase16 + ":" + outPath).String(16)
 }
 
+// OutputHashAlgo is how a fixed output's hash algorithm is written in the
+// .drv: prefixed with the ingestion method, as in "r:sha256" for a recursive
+// hash.
+func OutputHashAlgo(method, hashAlgo string) string {
+	return ingestionPrefix(method) + hashAlgo
+}
+
 // ingestionPrefix is Nix's makeFileIngestionPrefix: "r:" for a recursive hash,
 // "git:" for a git-hashed one, and empty for a flat one, which is unprefixed
 // for backward compatibility.
@@ -64,6 +71,16 @@ func ingestionPrefix(method string) string {
 		return "git:"
 	}
 	return ""
+}
+
+// caMethodName is how a fixed output's method is named in derivation JSON,
+// which is Nix's content-address method name rather than the outputHashMode
+// spelling: a recursive hash is a "nar".
+func caMethodName(method string) string {
+	if method == "recursive" {
+		return "nar"
+	}
+	return method
 }
 
 // Derivation is what the hash of a derivation depends on. The map-valued
@@ -371,9 +388,13 @@ func (d *Derivation) JSON() ([]byte, error) {
 		if o.Method != "" {
 			// A fixed output is described by its content address rather than
 			// by a path, which Nix leaves out of the JSON for the same reason
-			// it computes it: see `derivation/json.cc`.
-			sri, _ := ConvertHash(o.Hash, o.HashAlgo, "sri")
-			outputs[name] = map[string]any{"hash": sri, "method": o.Method}
+			// it computes it: see `derivation/json.cc`. The method is Nix's
+			// content-address name, and the algorithm is the unprefixed one.
+			algo := o.HashAlgo
+			algo = strings.TrimPrefix(algo, "r:")
+			algo = strings.TrimPrefix(algo, "git:")
+			sri, _ := ConvertHash(o.Hash, algo, "sri")
+			outputs[name] = map[string]any{"hash": sri, "method": caMethodName(o.Method)}
 			continue
 		}
 		outputs[name] = map[string]any{"path": storePathName(o.Path)}

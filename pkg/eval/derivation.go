@@ -254,7 +254,12 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 			w.throwf(ErrEval, "invalid output hash '%s': %s", outputHash, err)
 		}
 		outPath := nixhash.FixedOutputPath(name, method, hashAlgo, hashBase16)
-		drv.Outputs["out"] = nixhash.Output{Path: outPath, HashAlgo: hashAlgo, Hash: hashBase16, Method: method}
+		drv.Outputs["out"] = nixhash.Output{
+			Path:     outPath,
+			HashAlgo: nixhash.OutputHashAlgo(method, hashAlgo),
+			Hash:     hashBase16,
+			Method:   method,
+		}
 		drv.Env["out"] = outPath
 
 		d := &Derivation{drv: drv, outputs: outputs, outPaths: map[string]string{"out": outPath}}

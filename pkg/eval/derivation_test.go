@@ -61,6 +61,22 @@ func TestDerivationPaths(t *testing.T) {
 			`"/nix/store/59209gx1b93k17d049isa072bka4iv8w-fod"`,
 		},
 		{
+			// A recursive hash is written with the ingestion prefix in the
+			// .drv, "r:sha256", which is what makes the derivation path match.
+			"recursive fixed-output drvPath",
+			`(builtins.derivation { name = "fod"; builder = "x"; system = "x86_64-linux";
+			   outputHashMode = "recursive"; outputHashAlgo = "sha256";
+			   outputHash = "sha256-UNoyb2teqH26VM7YoOcazyqZ0AlDae045aWc31ZHFdw="; }).drvPath`,
+			`"/nix/store/8qv0zjjg8jksrjvdsr3nj3chjwg9r4jp-fod.drv"`,
+		},
+		{
+			"recursive fixed-output outPath",
+			`(builtins.derivation { name = "fod"; builder = "x"; system = "x86_64-linux";
+			   outputHashMode = "recursive"; outputHashAlgo = "sha256";
+			   outputHash = "sha256-UNoyb2teqH26VM7YoOcazyqZ0AlDae045aWc31ZHFdw="; }).outPath`,
+			`"/nix/store/adxqb5x4k92giw80xfiyfz154v1w4i1i-fod"`,
+		},
+		{
 			"structured-attrs drvPath",
 			`(builtins.derivation { name = "sa"; builder = "/bin/sh"; system = "x86_64-linux";
 			   __structuredAttrs = true; foo = "bar"; num = 3; list = [ 1 2 ]; nested = { x = 1; }; }).drvPath`,
@@ -106,6 +122,34 @@ func TestDerivationJSON(t *testing.T) {
 	want := `{"args":["-c","echo hello\nworld"],"builder":"/bin/sh","env":{"builder":"/bin/sh","dep":"/nix/store/v9ak4484q7m2q36wrjh2rvpks78h1156-dep.drv","dev":"/nix/store/lmdhqcfyd6n20ghz42bkjb9zhwkndww8-top-dev","name":"top","out":"/nix/store/w2hnnycf7gbizkn40kbg7qpnx7fmsyv8-top","outputs":"out dev","system":"x86_64-linux"},"inputs":{"drvs":{"v9ak4484q7m2q36wrjh2rvpks78h1156-dep.drv":{"dynamicOutputs":{},"outputs":["out"]}},"srcs":["v9ak4484q7m2q36wrjh2rvpks78h1156-dep.drv"]},"name":"top","outputs":{"dev":{"path":"lmdhqcfyd6n20ghz42bkjb9zhwkndww8-top-dev"},"out":{"path":"w2hnnycf7gbizkn40kbg7qpnx7fmsyv8-top"}},"system":"x86_64-linux","version":4}`
 	if string(got) != want {
 		t.Errorf("JSON mismatch\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// TestFixedOutputJSON covers how a fixed output is described in derivation
+// JSON: Nix names the method by its content-address name, so a recursive hash
+// is a "nar" rather than the outputHashMode spelling "recursive".
+func TestFixedOutputJSON(t *testing.T) {
+	val, err := EvalString(`builtins.derivation { name = "fod"; builder = "x"; system = "x86_64-linux";
+		outputHashMode = "recursive"; outputHashAlgo = "sha256";
+		outputHash = "sha256-UNoyb2teqH26VM7YoOcazyqZ0AlDae045aWc31ZHFdw="; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := DerivationOf(val)
+	if d == nil {
+		t.Fatal("value is not a derivation")
+	}
+	got, err := d.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"method":"nar"`,
+		`"hash":"sha256-UNoyb2teqH26VM7YoOcazyqZ0AlDae045aWc31ZHFdw="`,
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("JSON %s missing %s", got, want)
+		}
 	}
 }
 
