@@ -161,7 +161,7 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 		if sym == symArgs {
 			list := assertList(w, val)
 			for _, el := range list {
-				str := ToString(w, el.Eval(w))
+				str := CoerceEnv(w, el.Eval(w))
 				drv.Args = append(drv.Args, str.Content)
 				context = appendStringContext(context, str)
 			}
@@ -173,7 +173,7 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 		if structuredAttrs {
 			jsonAttrs[key] = valueToNative(w, val, &context)
 		} else {
-			str := ToString(w, val)
+			str := CoerceEnv(w, val)
 			drv.Env[key] = str.Content
 			context = appendStringContext(context, str)
 		}

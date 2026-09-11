@@ -70,8 +70,10 @@ func Add(w *worker, a, b NixValue) NixValue {
 	case KindPath:
 		// The operands are concatenated with no separator, so `./a + "b"`
 		// names `./ab` rather than `./a/b`; the result is then canonicalized.
-		// A reference to a store path cannot be folded into a path this way.
-		sa, sb := CoerceToString(w, a), CoerceToString(w, b)
+		// A path is not copied to the store — the result is a path, which is
+		// copied when it is used in a derivation — and a reference to a store
+		// path cannot be folded into a path this way.
+		sa, sb := CoerceNoCopy(w, a), CoerceNoCopy(w, b)
 		if hasContext(sa) || hasContext(sb) {
 			w.throwf(ErrEval, "a string that refers to a store path cannot be appended to a path")
 		}

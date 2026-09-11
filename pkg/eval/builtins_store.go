@@ -90,7 +90,7 @@ func hashBytes(w *worker, algo string, data []byte) string {
 // one trailing slash is dropped, then the part after the last remaining slash
 // is returned.
 func bBaseNameOf(w *worker, args ...*Expression) NixValue {
-	str := CoerceToString(w, args[0].Eval(w))
+	str := CoerceNoCopy(w, args[0].Eval(w))
 	return StrValue(withContext(legacyBaseNameOf(str.Content), str))
 }
 
@@ -112,10 +112,10 @@ func legacyBaseNameOf(s string) string {
 func bDirOf(w *worker, args ...*Expression) NixValue {
 	val := args[0].Eval(w)
 	if val.Kind() == KindPath {
-		p := val.Path()
-		return PathValue(&NixPath{Path: dirOfPath(p.Path)})
+		path := val.Path()
+		return PathValue(&NixPath{Path: dirOfPath(path.Path)})
 	}
-	str := CoerceToString(w, val)
+	str := CoerceNoCopy(w, val)
 	dir := dirOfPath(str.Content)
 	if dir == "." {
 		return StrValue(withContext(".", str))
