@@ -94,7 +94,7 @@ func TestSourceAccess(t *testing.T) {
 	}`)
 
 	got := evalFile(t, filepath.Join(dir, "main.nix"))
-	want := `{ base = "data.txt"; content = "hello world\n"; dir = { a.txt = "regular"; b.txt = "regular"; }; directory = "` + dir + `"; exists = true; missing = false; }`
+	want := `{ base = "data.txt"; content = "hello world\n"; dir = { "a.txt" = "regular"; "b.txt" = "regular"; }; directory = "` + dir + `"; exists = true; missing = false; }`
 	if got != want {
 		t.Errorf("source access = %s\nwant %s", got, want)
 	}

@@ -1,6 +1,9 @@
 package parser
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Nix merges attribute-path bindings while parsing, before evaluating: a set
 // that several bindings define through a common prefix is one set, and a
@@ -58,18 +61,50 @@ func (p *Parser) mergeBinds(bindNodes []*Node, prefix string) []*Node {
 	return out
 }
 
+// staticName is the name a path component names outright, and whether it does.
+// An identifier is one; so is a quoted name with nothing to interpolate, which
+// Nix settles in the parser just the same — `{ "a.b" = {...}; "a.b".c = 1; }`
+// merges, and the dot in it is part of the name rather than a step in a path.
+//
+// A quoted name carrying a backslash is left to the evaluator. Undoing the
+// escapes is what eval's unescapeQuoted does, and this package is underneath
+// that one; the name would have to match it exactly to key the same bindings
+// together, and an escape in an attribute name is rare enough not to be worth
+// a second implementation that could drift from the first.
+func staticName(p *Parser, n *Node) (string, bool) {
+	switch n.Type {
+	case IDNode:
+		return p.TokenString(n.Tokens[0]), true
+	case StringNode:
+		switch len(n.Nodes) {
+		case 0:
+			return "", true // the empty name, `"" = ...`
+		case 1:
+			if n.Nodes[0].Type != TextNode {
+				return "", false
+			}
+			s := p.TokenString(n.Nodes[0].Tokens[0])
+			if strings.ContainsRune(s, '\\') {
+				return "", false
+			}
+			return s, true
+		}
+	}
+	return "", false
+}
+
 // staticBindName is the name of a binding whose path is a single static
-// identifier, which is the only kind that can be merged here. Everything else,
+// component, which is the only kind that can be merged here. Everything else,
 // including a computed name, is left for the evaluator.
 func staticBindName(p *Parser, c *Node) (string, bool) {
 	if c.Type != BindNode {
 		return "", false
 	}
 	path := c.Nodes[0].Nodes
-	if len(path) != 1 || path[0].Type != IDNode {
+	if len(path) != 1 {
 		return "", false
 	}
-	return p.TokenString(path[0].Tokens[0]), true
+	return staticName(p, path[0])
 }
 
 // unfold turns `a.b.c = e` into `a = { b = { c = e; }; }`, which is what Nix's
@@ -84,7 +119,7 @@ func (p *Parser) unfold(c *Node) *Node {
 		return c
 	}
 	for _, comp := range path {
-		if comp.Type != IDNode {
+		if _, ok := staticName(p, comp); !ok {
 			return c
 		}
 	}

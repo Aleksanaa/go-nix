@@ -61,3 +61,60 @@ func bindName(p *Parser, b *Node) string {
 	path := b.Nodes[0].Nodes
 	return p.TokenString(path[len(path)-1].Tokens[0])
 }
+
+// TestMergeQuotedAttrNames covers that a quoted name with nothing to
+// interpolate is as static as an identifier, so bindings sharing one merge in
+// the parser. The dot in `"a.b"` belongs to the name, so the merged binding is
+// a single attribute and not a nested path.
+func TestMergeQuotedAttrNames(t *testing.T) {
+	for _, src := range []string{
+		`{ "a.b" = { x = 1; }; "a.b".y = 2; }`,
+		`{ "a.b".x = 1; "a.b".y = 2; }`,
+		`{ "a.b" = { x = 1; }; "a.b" = { y = 2; }; }`,
+	} {
+		p, err := ParseString(src)
+		assert.NoError(t, err, src)
+
+		set := p.Result
+		assert.Equal(t, 1, len(set.Nodes), src)
+		path := set.Nodes[0].Nodes[0].Nodes
+		assert.Equal(t, 1, len(path), src)
+		name, ok := staticName(p, path[0])
+		assert.True(t, ok, src)
+		assert.Equal(t, "a.b", name, src)
+
+		inner := set.Nodes[0].Nodes[1]
+		assert.Equal(t, SetNode, inner.Type, src)
+		assert.Equal(t, 2, len(inner.Nodes), src)
+		assert.Equal(t, "x", bindName(p, inner.Nodes[0]), src)
+		assert.Equal(t, "y", bindName(p, inner.Nodes[1]), src)
+	}
+}
+
+// TestStaticName covers which path components the parser settles outright. An
+// escape is left to the evaluator: undoing it is eval's job, and this package
+// is underneath that one.
+func TestStaticName(t *testing.T) {
+	for _, test := range []struct {
+		src  string
+		name string
+		ok   bool
+	}{
+		{`{ a = 1; }`, "a", true},
+		{`{ "a" = 1; }`, "a", true},
+		{`{ "a.b" = 1; }`, "a.b", true},
+		{`{ "" = 1; }`, "", true},
+		{`{ "a\tb" = 1; }`, "", false},
+		{`{ "x${"y"}" = 1; }`, "", false},
+		{`{ ${"a"} = 1; }`, "", false},
+	} {
+		p, err := ParseString(test.src)
+		assert.NoError(t, err, test.src)
+		path := p.Result.Nodes[0].Nodes[0].Nodes
+		name, ok := staticName(p, path[0])
+		assert.Equal(t, test.ok, ok, test.src)
+		if test.ok {
+			assert.Equal(t, test.name, name, test.src)
+		}
+	}
+}

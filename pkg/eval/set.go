@@ -176,7 +176,7 @@ func (s *AttrSet) Print(w *worker, recurse int) string {
 	parts = append(parts, "{")
 	for _, key := range s.Keys() {
 		x, _ := s.Get(key)
-		parts = append(parts, fmt.Sprintf("%s = %s;", key, x.Eval(w).Print(w, recurse-1)))
+		parts = append(parts, fmt.Sprintf("%s = %s;", printAttrName(key), x.Eval(w).Print(w, recurse-1)))
 	}
 	return strings.Join(append(parts, "}"), " ")
 }
@@ -337,4 +337,35 @@ func pair(w *worker, sym1 Sym, val1 NixValue, sym2 Sym, val2 NixValue) NixValue 
 	s.Bind1(sym1, value(w, val1))
 	s.Bind1(sym2, value(w, val2))
 	return SetValue(s.finish(w))
+}
+
+// printAttrName is how a name is written in a printed set. Nix quotes one that
+// could not be written as an identifier, so that what it prints reads back as
+// the same set: the dot in `{ "a.b" = 1; }` is part of the name, and printing
+// it bare would say the set held a nested `a`.
+func printAttrName(sym Sym) string {
+	s := sym.String()
+	if !isIdentName(s) {
+		return (&NixString{Content: s}).Print()
+	}
+	return s
+}
+
+// isIdentName reports whether a name can be written without quotes, which is
+// the identifier the lexer accepts: a letter or underscore, then letters,
+// digits, underscores, apostrophes and dashes.
+func isIdentName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_':
+		case i > 0 && (c >= '0' && c <= '9' || c == '\'' || c == '-'):
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -56,7 +56,7 @@ func TestStringContextBuiltins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{ /nix/store/n96mls8jja99bb70ghnlxk8mdb5b51i9-ctx.drv = { outputs = [ "out" ]; }; }`
+	want := `{ "/nix/store/n96mls8jja99bb70ghnlxk8mdb5b51i9-ctx.drv" = { outputs = [ "out" ]; }; }`
 	if got != want {
 		t.Errorf("getContext = %s, want %s", got, want)
 	}

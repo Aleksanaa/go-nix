@@ -218,6 +218,14 @@ func TestEvalErrors(t *testing.T) {
 		{`{ a.b = 1; a.b = 2; }`, `attribute 'a.b' already defined`},
 		{`{ a = { b = 1; }; a.b = 2; }`, `attribute 'a.b' already defined`},
 		{`{ a = { b = 1; }; a = { b = 2; }; }`, `attribute 'a.b' already defined`},
+		// A quoted name is static too, so a repeat of one is caught in the
+		// parser rather than left for the evaluator to meet.
+		{`{ "a.b" = 1; "a.b" = 2; }`, `attribute 'a.b' already defined`},
+		{`{ "a" = 1; a = 2; }`, `attribute 'a' already defined`},
+		{`{ "" = 1; "" = 2; }`, `attribute '' already defined`},
+		// One carrying an escape is left to the evaluator, which reports the
+		// same repeat once the set is built.
+		{`{ "a\tb" = 1; "a\tb" = 2; }`, "attribute 'a\tb' already defined"},
 		{`let a = a; in a`, `infinite recursion encountered`},
 		{`let a = b; b = a; in a`, `infinite recursion encountered`},
 		{`rec { a = b; b = a; }.a`, `infinite recursion encountered`},
@@ -265,6 +273,16 @@ func TestAttrPathMerge(t *testing.T) {
 		{`let a.b = 1; a.c = 2; in a`, `{ b = 1; c = 2; }`},
 		// Merging is structural: it must not force a binding that stays unused.
 		{`{ a = { b = throw "boom"; }; a.c = 1; }.a.c`, `1`},
+		// A quoted name with nothing to interpolate is settled in the parser
+		// just as an identifier is, so bindings that share one merge. The dot
+		// in it is part of the name and not a step in a path, which is what
+		// nixpkgs' texlive package set is built out of.
+		{`{ "a.b" = { x = 1; }; "a.b".y = 2; }`, `{ "a.b" = { x = 1; y = 2; }; }`},
+		{`{ "a.b".x = 1; "a.b".y = 2; }`, `{ "a.b" = { x = 1; y = 2; }; }`},
+		{`{ a."b.c".d = 1; a."b.c".e = 2; }`, `{ a = { "b.c" = { d = 1; e = 2; }; }; }`},
+		{`{ "" = { x = 1; }; "".y = 2; }`, `{ "" = { x = 1; y = 2; }; }`},
+		// A quoted name and the identifier spelling it are the same name.
+		{`{ "a".b = 1; a.c = 2; }`, `{ a = { b = 1; c = 2; }; }`},
 	} {
 		got, err := evalPrint(t, test[0])
 		if err != nil {
@@ -511,5 +529,36 @@ func TestPrintErrorIsCaught(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "boom") {
 		t.Errorf("got %v, want it to mention boom", err)
+	}
+}
+
+// TestPrintAttrNameQuoting covers that a name which could not be written as an
+// identifier is printed quoted, as Nix prints it. Printing `{ "a.b" = 1; }`
+// bare would read back as a nested `a`, which is a different set.
+func TestPrintAttrNameQuoting(t *testing.T) {
+	for _, test := range [][2]string{
+		// Identifiers are printed as they are, including the characters that
+		// only Nix allows in one.
+		{`{ a = 1; }`, `{ a = 1; }`},
+		{`{ _a9 = 1; }`, `{ _a9 = 1; }`},
+		{`{ a-b = 1; }`, `{ a-b = 1; }`},
+		{`{ a' = 1; }`, `{ a' = 1; }`},
+		// Everything else is quoted and escaped.
+		{`{ "a.b" = 1; }`, `{ "a.b" = 1; }`},
+		{`{ "" = 1; }`, `{ "" = 1; }`},
+		{`{ "9a" = 1; }`, `{ "9a" = 1; }`},
+		{`{ "a b" = 1; }`, `{ "a b" = 1; }`},
+		{`{ "a\"b" = 1; }`, `{ "a\"b" = 1; }`},
+		{`{ "a\tb" = 1; }`, `{ "a\tb" = 1; }`},
+		{`{ ${"/nix/store/x.drv"} = 1; }`, `{ "/nix/store/x.drv" = 1; }`},
+	} {
+		got, err := evalPrint(t, test[0])
+		if err != nil {
+			t.Errorf("%s: %v", test[0], err)
+			continue
+		}
+		if got != test[1] {
+			t.Errorf("%s: got %s, want %s", test[0], got, test[1])
+		}
 	}
 }
