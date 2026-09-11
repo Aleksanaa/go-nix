@@ -88,6 +88,19 @@ func TestDerivationPaths(t *testing.T) {
 			   __structuredAttrs = true; foo = "bar"; num = 3; list = [ 1 2 ]; nested = { x = 1; }; }).outPath`,
 			`"/nix/store/prp16lg0jg0rz4zfkhrshg4acnffw82z-sa"`,
 		},
+		{
+			// With more than one input the hash-modulo serialisation names each
+			// input by its hash and orders by that hash, not by derivation path
+			// (Nix's maskInputDrvs). A fixed-output input's hash sorts unlike
+			// its path, so reordering changes the output path.
+			"multi-input hash ordering",
+			`let
+			   reg = builtins.derivation { name = "reg"; builder = "/bin/sh"; system = "x86_64-linux"; };
+			   fod = builtins.derivation { name = "fod"; builder = "/bin/sh"; system = "x86_64-linux";
+			     outputHash = "0000000000000000000000000000000000000000000000000000"; outputHashAlgo = "sha256"; outputHashMode = "flat"; };
+			 in (builtins.derivation { name = "top"; builder = "/bin/sh"; system = "x86_64-linux"; x = reg; y = fod; }).outPath`,
+			`"/nix/store/wm20nsm23i56rs6gw15df1589lii6qj7-top"`,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -221,29 +221,55 @@ func (d *Derivation) aterm(maskOutputs, maskInputs bool, resolve func(drvPath st
 	b.WriteByte(']')
 	b.WriteByte(',')
 
-	// Input derivations.
+	// Input derivations. When the inputs are masked, each is named by its
+	// hash rather than its path, and — as in Nix's maskInputDrvs — the entries
+	// are keyed and ordered by that hash, with the outputs of inputs that
+	// share a hash collected together.
 	b.WriteByte('[')
-	for i, drvPath := range sortedKeys(d.InputDrvs) {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('(')
-		if maskInputs {
+	if maskInputs {
+		byHash := map[string][]string{}
+		for drvPath, outs := range d.InputDrvs {
 			h := resolve(drvPath)
-			printQuoted(&b, h, false)
-		} else {
-			printQuoted(&b, drvPath, false)
+			byHash[h] = append(byHash[h], outs...)
 		}
-		b.WriteByte(',')
-		b.WriteByte('[')
-		for j, out := range d.InputDrvs[drvPath] {
-			if j > 0 {
+		for i, h := range sortedKeys(byHash) {
+			if i > 0 {
 				b.WriteByte(',')
 			}
-			printQuoted(&b, out, false)
+			b.WriteByte('(')
+			printQuoted(&b, h, false)
+			b.WriteByte(',')
+			b.WriteByte('[')
+			outs := byHash[h]
+			sort.Strings(outs)
+			outs = compact(outs)
+			for j, out := range outs {
+				if j > 0 {
+					b.WriteByte(',')
+				}
+				printQuoted(&b, out, false)
+			}
+			b.WriteByte(']')
+			b.WriteByte(')')
 		}
-		b.WriteByte(']')
-		b.WriteByte(')')
+	} else {
+		for i, drvPath := range sortedKeys(d.InputDrvs) {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteByte('(')
+			printQuoted(&b, drvPath, false)
+			b.WriteByte(',')
+			b.WriteByte('[')
+			for j, out := range d.InputDrvs[drvPath] {
+				if j > 0 {
+					b.WriteByte(',')
+				}
+				printQuoted(&b, out, false)
+			}
+			b.WriteByte(']')
+			b.WriteByte(')')
+		}
 	}
 	b.WriteByte(']')
 	b.WriteByte(',')
@@ -337,6 +363,20 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// compact removes adjacent duplicates from a sorted slice.
+func compact(s []string) []string {
+	if len(s) <= 1 {
+		return s
+	}
+	out := s[:1]
+	for _, x := range s[1:] {
+		if x != out[len(out)-1] {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func outputPathName(drvName, outputName string) string {
