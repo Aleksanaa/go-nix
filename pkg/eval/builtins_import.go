@@ -49,6 +49,24 @@ func resolveImportFile(w *worker, p string) string {
 // importFile parses and evaluates the file at p in scope, memoizing the result
 // when memoize is set.
 func importFile(w *worker, p string, scope *Scope, memoize bool) NixValue {
+	if content, ok := corepkgContent(p); ok {
+		// An embedded core package, reached through <nix/...>: it is parsed
+		// from memory, not read from the file system.
+		if memoize {
+			if x, ok := importCache.Load(p); ok {
+				return x.(*Expression).Eval(w)
+			}
+		}
+		pr, err := parser.ParseString(content)
+		if err != nil {
+			w.throwf(ErrEval, "%s", err)
+		}
+		x := delay(w, scope, pr)
+		if memoize {
+			importCache.Store(p, x)
+		}
+		return x.Eval(w)
+	}
 	file := resolveImportFile(w, p)
 	if memoize {
 		if x, ok := importCache.Load(file); ok {

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"path"
+	"strings"
 
 	"github.com/aleksanaa/go-nix/pkg/source"
 )
@@ -24,5 +25,12 @@ func (p *NixPath) Join(s string) *NixPath {
 // directory of the file that contains them, <angle> paths through NIX_PATH,
 // absolute paths left as they are.
 func resolvePathLiteral(base, s string) string {
+	// <nix/...> names a core package embedded in the evaluator, not a path.
+	if name, ok := strings.CutPrefix(s, "<nix/"); ok && strings.HasSuffix(name, ">") {
+		name = strings.TrimSuffix(name, ">")
+		if _, ok := corepkgs[name]; ok {
+			return corepkgPrefix + name
+		}
+	}
 	return source.Resolve(base, s)
 }

@@ -20,12 +20,50 @@ import (
 const drvExtension = ".drv"
 
 // Output is one output of a derivation. An input-addressed output has only
-// its Path set; the HashAlgo and Hash fields are for content-addressed
-// outputs, which this package does not produce.
+// its Path set; a fixed-output output has HashAlgo, Hash and Method set, and
+// its Path is computed from those. The HashAlgo and Hash fields are unused for
+// the content-addressed outputs this package does not produce.
 type Output struct {
 	Path     string
 	HashAlgo string
-	Hash     string
+	Hash     string // base-16
+	// Method is the file ingestion method of a fixed output: "flat",
+	// "recursive" or "git". It is empty for an input-addressed output.
+	Method string
+}
+
+// FixedOutputPath is Nix's makeFixedOutputPath: the store path of a
+// fixed-output derivation's output. It is a pure function of the method, the
+// hash and the output path name, not of the derivation, which is why a fixed
+// output needs no hash modulo.
+func FixedOutputPath(name, method, hashAlgo, hashBase16 string) string {
+	if hashAlgo == "sha256" && method == "recursive" {
+		return makeStorePathString("source", "sha256:"+hashBase16, name)
+	}
+	payload := "fixed:out:" + ingestionPrefix(method) + hashAlgo + ":" + hashBase16 + ":"
+	return makeStorePathString("output:out", String(payload).TypeString(16), name)
+}
+
+// FixedOutputInputHash is the hash a fixed output presents to a derivation
+// that depends on it: Nix's hashInput for a fixed-output derivation. It folds
+// the output path into a content hash so that the provenance of the fixed
+// output does not leak into the dependent's hash.
+func FixedOutputInputHash(method, hashAlgo, hashBase16, outPath string) string {
+	algo := ingestionPrefix(method) + hashAlgo
+	return String("fixed:out:" + algo + ":" + hashBase16 + ":" + outPath).String(16)
+}
+
+// ingestionPrefix is Nix's makeFileIngestionPrefix: "r:" for a recursive hash,
+// "git:" for a git-hashed one, and empty for a flat one, which is unprefixed
+// for backward compatibility.
+func ingestionPrefix(method string) string {
+	switch method {
+	case "recursive":
+		return "r:"
+	case "git":
+		return "git:"
+	}
+	return ""
 }
 
 // Derivation is what the hash of a derivation depends on. The map-valued
@@ -330,6 +368,14 @@ const derivationJSONVersion = 4
 func (d *Derivation) JSON() ([]byte, error) {
 	outputs := make(map[string]any, len(d.Outputs))
 	for name, o := range d.Outputs {
+		if o.Method != "" {
+			// A fixed output is described by its content address rather than
+			// by a path, which Nix leaves out of the JSON for the same reason
+			// it computes it: see `derivation/json.cc`.
+			sri, _ := ConvertHash(o.Hash, o.HashAlgo, "sri")
+			outputs[name] = map[string]any{"hash": sri, "method": o.Method}
+			continue
+		}
 		outputs[name] = map[string]any{"path": storePathName(o.Path)}
 	}
 

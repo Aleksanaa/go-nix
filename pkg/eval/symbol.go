@@ -91,6 +91,9 @@ var (
 	symHashAlgo        = Intern("hashAlgo")
 	symToHashFormat    = Intern("toHashFormat")
 	symFunctor         = Intern("__functor")
+	symOutputHash      = Intern("outputHash")
+	symOutputHashAlgo  = Intern("outputHashAlgo")
+	symOutputHashMode  = Intern("outputHashMode")
 )
 
 func Intern(name string) Sym {

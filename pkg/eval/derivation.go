@@ -129,6 +129,8 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 	}
 	var outputs []string
 	var context []stringContext
+	var outputHash, outputHashAlgo, outputHashMode string
+	hasOutputHash := false
 
 	for _, a := range attrs.attrs {
 		sym := a.sym
@@ -159,6 +161,12 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 			drv.System = str.Content
 		case symOutputs:
 			outputs = strings.Fields(str.Content)
+		case symOutputHash:
+			outputHash, hasOutputHash = str.Content, true
+		case symOutputHashAlgo:
+			outputHashAlgo = str.Content
+		case symOutputHashMode:
+			outputHashMode = str.Content
 		}
 	}
 
@@ -189,6 +197,40 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 	// inputs.
 	addInputs(w, drv, context)
 
+	// A fixed-output derivation names the hash of its one output, so its
+	// output path is computed directly from that hash rather than from the
+	// hash modulo the derivation. See Nix's prim_derivationStrict.
+	if hasOutputHash {
+		if len(outputs) != 1 || outputs[0] != "out" {
+			w.throwf(ErrEval, "multiple outputs are not supported in fixed-output derivations")
+		}
+		method := "flat"
+		switch outputHashMode {
+		case "", "flat":
+		case "recursive":
+			method = "recursive"
+		case "git":
+			method = "git"
+		case "text":
+			w.throwf(ErrEval, "text-hashed derivations are not supported")
+		default:
+			w.throwf(ErrEval, "invalid value '%s' for 'outputHashMode' attribute", outputHashMode)
+		}
+		hashBase16, hashAlgo, err := nixhash.ParseHash(outputHash, outputHashAlgo)
+		if err != nil {
+			w.throwf(ErrEval, "invalid output hash '%s': %s", outputHash, err)
+		}
+		outPath := nixhash.FixedOutputPath(name, method, hashAlgo, hashBase16)
+		drv.Outputs["out"] = nixhash.Output{Path: outPath, HashAlgo: hashAlgo, Hash: hashBase16, Method: method}
+		drv.Env["out"] = outPath
+
+		d := &Derivation{drv: drv, outputs: outputs, outPaths: map[string]string{"out": outPath}}
+		d.drvPath = drv.DrvPath()
+		d.inputHash = nixhash.FixedOutputInputHash(method, hashAlgo, hashBase16, outPath)
+		derivationRegistry.Store(d.drvPath, d)
+		return d
+	}
+
 	// Blank the environment variables named after the outputs, so the hash of
 	// the derivation does not depend on its own output paths.
 	for _, o := range outputs {
@@ -205,14 +247,14 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 	}
 
 	// The output paths come from the hash modulo the derivation's own outputs.
-	outputHash, ok := drv.OutputHash(resolve)
+	hashModulo, ok := drv.OutputHash(resolve)
 	if !ok {
 		w.throwf(ErrEval, "derivation '%s' has an input whose hash is not known", name)
 	}
 
 	d := &Derivation{drv: drv, outputs: outputs, outPaths: map[string]string{}}
 	for _, o := range outputs {
-		path := drv.OutputPath(o, outputHash)
+		path := drv.OutputPath(o, hashModulo)
 		d.outPaths[o] = path
 		drv.Outputs[o] = nixhash.Output{Path: path}
 		drv.Env[o] = path

@@ -19,16 +19,43 @@ var algoSizes = map[string]int{
 // otherwise algo supplies it. format is "base16", "nix32" (or its alias
 // "base32"), "base64" or "sri".
 func ConvertHash(s, algo, format string) (string, error) {
+	bytes, inputAlgo, err := decodeHash(s, algo, false)
+	if err != nil {
+		return "", err
+	}
+	return encodeHash(bytes, inputAlgo, format)
+}
+
+// ParseHash parses a hash in any of Nix's encodings and returns the base-16
+// digest together with the algorithm it resolved to. An empty string is the
+// zero hash of algo's size, which Nix's newHashAllowEmpty accepts; algo is used
+// when the string does not name its own.
+func ParseHash(s, algo string) (base16, resolvedAlgo string, err error) {
+	bytes, resolvedAlgo, err := decodeHash(s, algo, true)
+	if err != nil {
+		return "", "", err
+	}
+	return hex.EncodeToString(bytes), resolvedAlgo, nil
+}
+
+func decodeHash(s, algo string, allowEmpty bool) (Hash, string, error) {
+	if s == "" && allowEmpty {
+		size, ok := algoSizes[algo]
+		if !ok {
+			return nil, "", fmt.Errorf("hash '%s' does not include a type", s)
+		}
+		return make(Hash, size), algo, nil
+	}
 	inputAlgo, rest, isSRI := splitHashPrefix(s)
 	if inputAlgo == "" {
 		inputAlgo = algo
 	}
 	if inputAlgo == "" {
-		return "", fmt.Errorf("hash '%s' does not include a type", s)
+		return nil, "", fmt.Errorf("hash '%s' does not include a type", s)
 	}
 	size, ok := algoSizes[inputAlgo]
 	if !ok {
-		return "", fmt.Errorf("unknown hash algorithm '%s'", inputAlgo)
+		return nil, "", fmt.Errorf("unknown hash algorithm '%s'", inputAlgo)
 	}
 
 	var bytes []byte
@@ -47,12 +74,15 @@ func ConvertHash(s, algo, format string) (string, error) {
 		}
 	}
 	if err != nil {
-		return "", fmt.Errorf("invalid hash '%s': %v", s, err)
+		return nil, "", fmt.Errorf("invalid hash '%s': %v", s, err)
 	}
 	if len(bytes) != size {
-		return "", fmt.Errorf("hash '%s' has the wrong length", s)
+		return nil, "", fmt.Errorf("hash '%s' has the wrong length", s)
 	}
+	return Hash(bytes), inputAlgo, nil
+}
 
+func encodeHash(bytes []byte, algo, format string) (string, error) {
 	switch format {
 	case "base16":
 		return hex.EncodeToString(bytes), nil
@@ -61,7 +91,7 @@ func ConvertHash(s, algo, format string) (string, error) {
 	case "base64":
 		return base64.StdEncoding.EncodeToString(bytes), nil
 	case "sri":
-		return inputAlgo + "-" + base64.StdEncoding.EncodeToString(bytes), nil
+		return algo + "-" + base64.StdEncoding.EncodeToString(bytes), nil
 	}
 	return "", fmt.Errorf("unknown hash format '%s', expected 'base16', 'base32', 'base64' or 'sri'", format)
 }
