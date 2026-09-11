@@ -115,7 +115,15 @@ func (x *Expression) resolve(w *worker) *Expression {
 	case p.ListNode:
 		list := make(NixList, len(n.Nodes))
 		for i, c := range n.Nodes {
-			list[i] = newScoped(w, scope, c).blaming(blameListElem)
+			// An element that names a binding is that binding, as it is for the
+			// argument of a call: Nix shares it the same way, in ExprList::eval.
+			// A shared thunk is described by whoever it belongs to, so only a
+			// thunk made here is labelled as an element of this list.
+			y, shared := scope.thunkFor(w, c)
+			if !shared {
+				y.blaming(blameListElem)
+			}
+			list[i] = y
 		}
 		x.setValue(ListValue(list))
 
@@ -163,7 +171,7 @@ func (x *Expression) resolve(w *worker) *Expression {
 		// in reverse.
 		var thunks [maxSpine]*Expression
 		for i := range k {
-			thunks[i] = x.thunkFor(w, args[k-1-i])
+			thunks[i], _ = scope.thunkFor(w, args[k-1-i])
 		}
 		return applySpine(w, x, fn, thunks[:k])
 
@@ -297,8 +305,15 @@ func (x *Expression) evalBinds(w *worker, nt p.NodeType) {
 				continue
 			}
 			attrpath := scope.evalAttrPath(w, c.Nodes[0])
-			y := x.WithScoped(w, c.Nodes[1], scope)
-			leaf := set.Bind(w, attrpath, y.blamingAttr(attrpath[len(attrpath)-1]))
+			// A value that names a binding is that binding, as a list element
+			// and a call argument are: Nix borrows the same way, in
+			// ExprAttrs::eval. What is borrowed is named by whoever it belongs
+			// to, so only a thunk of this binding's own is named after it.
+			y, borrowed := scope.thunkForBinding(w, c.Nodes[1])
+			if !borrowed {
+				y.blamingAttr(attrpath[len(attrpath)-1])
+			}
+			leaf := set.Bind(w, attrpath, y)
 			// The position is the attribute's name, so unsafeGetAttrPos can
 			// point back at it.
 			if comps := c.Nodes[0].Nodes; len(comps) > 0 {

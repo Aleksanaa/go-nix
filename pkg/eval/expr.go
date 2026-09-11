@@ -446,20 +446,27 @@ func (x *Expression) evalNodeAs(w *worker, n *p.Node, kind blameKind) NixValue {
 // the same value every time, so one expression per node serves every call.
 // Nix does the same, in Expr::maybeThunk.
 //
-// What comes back may be shared, so nothing may relabel it for a backtrace:
-// whoever holds it already describes it.
-func (x *Expression) thunkFor(w *worker, n *p.Node) *Expression {
+// It reports whether what comes back was borrowed from another binding. A
+// borrowed expression is described by whoever it belongs to, so nothing may
+// relabel it for a backtrace; a literal is not borrowed in that sense, since
+// the expression a literal node is worked out into belongs to that node and to
+// nothing else, and labelling it says only what is already true.
+//
+// Borrowing is also what lets two places hold the very same thunk, which is
+// what makes them equal when what they hold is a value equal to nothing else —
+// a function. See sameThunk.
+func (scope *Scope) thunkFor(w *worker, n *p.Node) (*Expression, bool) {
 	switch n.Type {
 	case p.IDNode:
 		// A name the chain does not hold may still come from a `with`, whose
-		// set has not been evaluated yet, so that one stays a thunk.
-		if _, y, ok := x.scope().lookupNode(w, n); ok {
-			return y
+		// set is not forced to find out: that one stays a thunk.
+		if y, ok := scope.lookupBorrow(w, n); ok {
+			return y, true
 		}
 	case p.IntNode, p.FloatNode, p.PathNode, p.URINode:
-		return x.scope().literalExpr(w, n)
+		return scope.literalExpr(w, n), false
 	}
-	return x.WithNode(w, n)
+	return newScoped(w, scope, n), false
 }
 
 // take makes this expression stand for what src stands for.
@@ -514,4 +521,37 @@ func (x *Expression) claim(w *worker) bool {
 	}
 	w.throwf(ErrInfiniteRecursion, "infinite recursion encountered")
 	return false
+}
+
+// sameThunk reports whether two places hold the very same thunk, which makes
+// what they hold equal without forcing it or looking at it.
+//
+// It is what lets a function be equal to itself. A function is equal to
+// nothing, not even another written the same way, so `[ f ] == [ f ]` could
+// only be false — except that both lists borrowed the binding rather than
+// making a thunk of their own, so the two elements are one thunk, and a thing
+// is equal to itself. Nix says the same and by the same means: eqValues opens
+// with a pointer comparison, over a tree its own maybeThunk shares this way.
+//
+// The sharing is what carries the meaning, so this is only asked where a
+// container holds the thunks — never of the operands of `==`, which are
+// evaluated into places of their own and are never the same thunk, in Nix as
+// here.
+func sameThunk(a, b *Expression) bool { return a == b }
+
+// thunkForBinding is thunkFor for the value of an attribute, which a backtrace
+// names after that attribute.
+//
+// It borrows a binding the same way, but takes no shortcut for a literal. The
+// expression a literal is worked out into is already a value, with no node left
+// to record the attribute's name against, and the name is worth more here than
+// the allocation it costs to keep: a set built out of literals is exactly where
+// a backtrace has to say which attribute failed.
+func (scope *Scope) thunkForBinding(w *worker, n *p.Node) (*Expression, bool) {
+	if n.Type == p.IDNode {
+		if y, ok := scope.lookupBorrow(w, n); ok {
+			return y, true
+		}
+	}
+	return newScoped(w, scope, n), false
 }

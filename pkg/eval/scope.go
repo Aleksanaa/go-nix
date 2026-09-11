@@ -114,7 +114,25 @@ func (s *Scope) withSet(w *worker) NixSet {
 // is known. Forcing it during the walk would recurse on a fixpoint whose body
 // is `with self; …`, where a name resolves lexically but only after the walk
 // has gone past the `with` scope.
-func (scope *Scope) lookupFrom(w *worker, sym Sym) (x *Expression, hops, slot int32, ok bool) {
+func (scope *Scope) lookupFrom(w *worker, sym Sym) (*Expression, int32, int32, bool) {
+	if x, hops, slot, ok := scope.lookupLexicalFrom(sym); ok {
+		return x, hops, slot, true
+	}
+	// Nothing lexical: the nearest `with` set that has the name wins.
+	for s := scope; s != nil; s = s.Parent {
+		if s.LowPrio {
+			if y, found := s.withSet(w).Get(sym); found {
+				return y, -1, -1, true
+			}
+		}
+	}
+	return nil, -1, -1, false
+}
+
+// lookupLexicalFrom is the half of the search that the scopes answer outright,
+// without evaluating anything: a `with` set would have to be forced to say
+// whether it has a name, and this never forces one.
+func (scope *Scope) lookupLexicalFrom(sym Sym) (x *Expression, hops, slot int32, ok bool) {
 	for s := scope; s != nil; s, hops = s.Parent, hops+1 {
 		if s.LowPrio {
 			continue
@@ -128,14 +146,6 @@ func (scope *Scope) lookupFrom(w *worker, sym Sym) (x *Expression, hops, slot in
 		if set := (*AttrSet)(s.bound); set != nil {
 			if y, slot, found := set.getSlot(sym); found {
 				return y, hops, slot, true
-			}
-		}
-	}
-	// Nothing lexical: the nearest `with` set that has the name wins.
-	for s := scope; s != nil; s = s.Parent {
-		if s.LowPrio {
-			if y, found := s.withSet(w).Get(sym); found {
-				return y, -1, -1, true
 			}
 		}
 	}
@@ -308,4 +318,53 @@ func (scope *Scope) Names() []string {
 // only the one.
 func (scope *Scope) Subscope(binds NixSet, lowPrio bool) *Scope {
 	return scope.subscope(mainWorker, binds, lowPrio)
+}
+
+// lookupBorrow finds the binding an identifier names, for a place that would
+// borrow it rather than make a thunk of its own — a list element, a call
+// argument, the value of an attribute.
+//
+// It answers out of the scopes alone. A name they do not bind could still come
+// from a `with`, and finding out means forcing that `with` set, which would
+// evaluate something the expression may never ask for; so a name like that is
+// not borrowed and stays a thunk. Nix stops at the same line, in lookupVar's
+// noEval flag, whose comment says the same: it gives up the sharing for `with`
+// rather than pay to keep it.
+//
+// A group still being built is the other place it gives up. The names bound
+// above this point are in the set already and can be borrowed; a name the
+// group binds further down is not there yet, and must not be looked for
+// further out, where it would find the binding this one shadows. Nix meets the
+// same moment as a slot it has not filled in — see ExprVar::maybeThunk, "The
+// value might not be initialised in the environment yet" — and does the same
+// thing, which is to make an ordinary thunk and let the force resolve it.
+func (scope *Scope) lookupBorrow(w *worker, n *p.Node) (*Expression, bool) {
+	if m := w.remember(scope.file, n.ID); m.hops < 0 {
+		// The syntax settled it: nothing in the chain binds this name, so only
+		// a `with` can have it and there is nothing to borrow.
+		return nil, false
+	}
+	sym := scope.file.static.get(n.ID).sym
+	for s := scope; s != nil; s = s.Parent {
+		if s.LowPrio {
+			continue // a `with`: it would have to be forced to answer
+		}
+		if s.sym != 0 {
+			if s.sym == sym {
+				return (*Expression)(s.bound), true
+			}
+			continue
+		}
+		set := (*AttrSet)(s.bound)
+		if set == nil {
+			continue
+		}
+		if !set.sorted {
+			return set.bound(sym)
+		}
+		if y, _, found := set.getSlot(sym); found {
+			return y, true
+		}
+	}
+	return nil, false
 }

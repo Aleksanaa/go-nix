@@ -41,7 +41,7 @@ func (l NixList) Compare(w *worker, other NixList) bool {
 		return false
 	}
 	for i, x := range l {
-		if !x.Eval(w).Compare(w, other[i].Eval(w)) {
+		if !sameThunk(x, other[i]) && !x.Eval(w).Compare(w, other[i].Eval(w)) {
 			return false
 		}
 	}

@@ -677,3 +677,92 @@ func TestDerivationEquality(t *testing.T) {
 		}
 	}
 }
+
+// TestSharedThunkEquality covers the one way a function can be equal to
+// anything: when two places hold the very same thunk.
+//
+// A list element or a call argument that names a binding borrows that binding
+// rather than making a thunk of its own, so `[ f ] == [ f ]` compares one
+// thunk with itself. Nix does the same and by the same means — ExprList::eval
+// borrows through maybeThunk, and eqValues opens with a pointer comparison —
+// so this is not a liberty gon takes but a shape it has to match.
+func TestSharedThunkEquality(t *testing.T) {
+	for _, test := range [][2]string{
+		// Both elements borrow the same binding, so they are one thunk.
+		{`let f = x: x; in [ f ] == [ f ]`, `true`},
+		{`let f = x: x; in [ [ f ] ] == [ [ f ] ]`, `true`},
+		{`let f = x: x; l = [ f ]; in l == [ f ]`, `true`},
+		// An attribute's value borrows the same way, and so does a binding that
+		// names an earlier one in its own group.
+		{`let f = x: x; in { a = f; } == { a = f; }`, `true`},
+		{`let f = x: x; g = f; in [ f ] == [ g ]`, `true`},
+		{`let f = x: x; g = f; in { a = g; } == { a = f; }`, `true`},
+		// Anything that makes a thunk of its own is a different thunk, and
+		// then the functions in it are equal to nothing, including each other.
+		{`let f = x: x; in [ f ] == [ (y: y) ]`, `false`},
+		{`let f = x: x; s = { a = f; }; in [ s.a ] == [ f ]`, `false`},
+		{`let f = x: x; s = { a = f; }; in [ s.a ] == [ s.a ]`, `false`},
+		{`let f = x: x; id = y: y; in [ (id f) ] == [ f ]`, `false`},
+		{`let f = x: x; in [ (builtins.head [ f ]) ] == [ f ]`, `false`},
+		{`let f = x: x; in [ (if true then f else f) ] == [ f ]`, `false`},
+		// The operands of `==` are evaluated into places of their own, so they
+		// are never the same thunk however they are written. Nix agrees: this
+		// is false there too.
+		{`let f = x: x; in f == f`, `false`},
+		{`(x: x) == (x: x)`, `false`},
+		// A group still being built does not borrow from outside itself: with
+		// nothing bound yet it cannot tell a name it will bind further down
+		// from one it never will, and looking outward would find the binding it
+		// shadows. So this is false here and true in Nix, which knows the names
+		// a group binds before it evaluates any of them — its env is a slot per
+		// name, sized by the parser. Closing it means knowing the same thing.
+		{`let f = x: x; in rec { a = f; } == rec { a = f; }`, `false`},
+		// A name the group does bind is not borrowed before it is bound, which
+		// is what Nix's unfilled slot comes to as well.
+		{`let f = x: x; in rec { a = b; b = f; } == rec { a = b; b = f; }`, `false`},
+		//
+		// Borrowing decides nothing for a value that can be compared anyway.
+		{`let a = 1; in [ a ] == [ 1 ]`, `true`},
+		{`let a = 1; in [ a ] == [ 2 ]`, `false`},
+	} {
+		got, err := evalPrint(t, test[0])
+		if err != nil {
+			t.Errorf("%s: %v", test[0], err)
+			continue
+		}
+		if got != test[1] {
+			t.Errorf("%s: got %s, want %s", test[0], got, test[1])
+		}
+	}
+}
+
+// TestBorrowedThunkKeepsLaziness covers that borrowing a binding for a list
+// element does not evaluate anything to decide what to borrow.
+//
+// A name the scopes do not bind could still come from a `with`, and finding
+// out means forcing that `with` set. So a name like that is not borrowed: it
+// stays a thunk, and a `with` set the expression never asks about is never
+// built. Nix stops at the same line, in lookupVar's noEval.
+func TestBorrowedThunkKeepsLaziness(t *testing.T) {
+	for _, test := range [][2]string{
+		// The `with` set would throw if it were forced, and building a list
+		// that mentions one of its names must not force it.
+		{`let xs = with (throw "forced"); [ a ]; in builtins.length xs`, `1`},
+		{`let xs = with (throw "forced"); [ a b c ]; in builtins.length xs`, `3`},
+		// Asking for the element is what forces it, and then it does throw.
+		{`builtins.tryEval (with (throw "forced"); builtins.head [ a ])`,
+			`{ success = false; value = false; }`},
+		// A name a `with` really does provide still resolves when forced.
+		{`with { a = 42; }; builtins.head [ a ]`, `42`},
+		{`let a = 1; in with { a = 42; }; builtins.head [ a ]`, `1`},
+	} {
+		got, err := evalPrint(t, test[0])
+		if err != nil {
+			t.Errorf("%s: %v", test[0], err)
+			continue
+		}
+		if got != test[1] {
+			t.Errorf("%s: got %s, want %s", test[0], got, test[1])
+		}
+	}
+}

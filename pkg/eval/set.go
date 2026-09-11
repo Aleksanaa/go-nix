@@ -310,7 +310,10 @@ func (s *AttrSet) Compare(w *worker, other NixSet) bool {
 	}
 	for i, a := range s.attrs {
 		b := other.attrs[i]
-		if a.sym != b.sym || !a.x.Eval(w).Compare(w, b.x.Eval(w)) {
+		if a.sym != b.sym {
+			return false
+		}
+		if !sameThunk(a.x, b.x) && !a.x.Eval(w).Compare(w, b.x.Eval(w)) {
 			return false
 		}
 	}
@@ -396,4 +399,20 @@ func isIdentName(s string) bool {
 		}
 	}
 	return true
+}
+
+// bound is the expression a name is bound to in a set that is still being
+// built, and whether it can be borrowed. It is a walk rather than a search
+// because the names are not in order yet.
+//
+// Not found means the group may still bind the name further down, so nothing
+// can be borrowed and nothing further out may be looked at either: the binding
+// that would be found there is the one this group shadows.
+func (s *AttrSet) bound(sym Sym) (*Expression, bool) {
+	for i := range s.attrs {
+		if s.attrs[i].sym == sym {
+			return s.attrs[i].x, true
+		}
+	}
+	return nil, false
 }
