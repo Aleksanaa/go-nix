@@ -137,12 +137,6 @@ func bConvertHash(w *worker, args ...*Expression) NixValue {
 	return String(out)
 }
 
-// bFromTOML implements builtins.fromTOML.
-func bFromTOML(w *worker, args ...*Expression) NixValue {
-	w.throwf(ErrEval, "builtins.fromTOML is not implemented")
-	return Null
-}
-
 // bToXML implements builtins.toXML.
 func bToXML(w *worker, args ...*Expression) NixValue {
 	w.throwf(ErrEval, "builtins.toXML is not implemented")

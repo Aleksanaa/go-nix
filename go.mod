@@ -3,6 +3,7 @@ module github.com/aleksanaa/go-nix
 go 1.26.7
 
 require (
+	github.com/BurntSushi/toml v1.4.0
 	github.com/alecthomas/assert v0.0.0-20170929043011-405dbfeb8e38
 	github.com/alecthomas/kingpin v2.2.6+incompatible
 	github.com/orivej/e v0.0.0-20180728214217-ac3492690fda
