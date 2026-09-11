@@ -2,23 +2,26 @@ package nixhash
 
 import "testing"
 
-// TestParseHashUnpaddedSRI pins that an SRI hash is accepted without its
-// trailing '=' padding, as Nix accepts it: nixpkgs carries hashes in that form,
-// and rejecting one turns a fixed-output derivation into an evaluation error.
-func TestParseHashUnpaddedSRI(t *testing.T) {
-	const (
-		unpadded = "sha256-UlI+6OMUj5F6uVAw+Mg2wOZrjfdRq73d1qufaXVI/go"
-		base16   = "52523ee8e3148f917ab95030f8c836c0e66b8df751abbdddd6ab9f697548fe0a"
-	)
-	got, algo, err := ParseHash(unpadded, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != base16 {
-		t.Errorf("ParseHash(%s) = %s, want %s", unpadded, got, base16)
-	}
-	if algo != "sha256" {
-		t.Errorf("ParseHash(%s) algo = %s, want sha256", unpadded, algo)
+// TestParseHashSRI covers SRI's base64 padding: Nix skips everything from the
+// first '=' on, so it accepts a hash with no padding or with more than the
+// canonical amount, and nixpkgs contains both spellings.
+func TestParseHashSRI(t *testing.T) {
+	for _, test := range []struct{ hash, base16 string }{
+		// nixpkgs ffmpeg, written without padding.
+		{"sha256-UlI+6OMUj5F6uVAw+Mg2wOZrjfdRq73d1qufaXVI/go", "52523ee8e3148f917ab95030f8c836c0e66b8df751abbdddd6ab9f697548fe0a"},
+		// nixpkgs epiphany, written with an extra '='.
+		{"sha256-9m8R5GUOBCm3xDXVHBDrV/HbjfIDL+D3wUGkkqc4RmA==", "f66f11e4650e0429b7c435d51c10eb57f1db8df2032fe0f7c141a492a7384660"},
+	} {
+		got, algo, err := ParseHash(test.hash, "")
+		if err != nil {
+			t.Fatalf("ParseHash(%s): %v", test.hash, err)
+		}
+		if got != test.base16 {
+			t.Errorf("ParseHash(%s) = %s, want %s", test.hash, got, test.base16)
+		}
+		if algo != "sha256" {
+			t.Errorf("ParseHash(%s) algo = %s, want sha256", test.hash, algo)
+		}
 	}
 }
 

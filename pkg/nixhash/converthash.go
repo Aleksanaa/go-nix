@@ -96,12 +96,15 @@ func encodeHash(bytes []byte, algo, format string) (string, error) {
 	return "", fmt.Errorf("unknown hash format '%s', expected 'base16', 'base32', 'base64' or 'sri'", format)
 }
 
-// base64Decode accepts the standard base64 alphabet with or without padding.
-// Nix's SRI parser does, and nixpkgs contains unpadded hashes.
+// base64Decode mirrors Nix's base64::decode: it ignores everything from the
+// first '=' on, skips newlines, and tolerates a trailing partial group. Go's
+// StdEncoding insists on exactly one '=' where Nix accepts none or several, and
+// nixpkgs contains hashes written each way.
 func base64Decode(s string) ([]byte, error) {
-	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
-		return b, nil
+	if i := strings.IndexByte(s, '='); i >= 0 {
+		s = s[:i]
 	}
+	s = strings.ReplaceAll(s, "\n", "")
 	return base64.RawStdEncoding.DecodeString(s)
 }
 
