@@ -69,3 +69,26 @@ func TestStringContextBuiltins(t *testing.T) {
 		t.Errorf("appendContext = %s, want %s", got, want)
 	}
 }
+
+// TestToJSON checks that JSON is rendered the way Nix's writer does: floats
+// keep Nix's formatting and Go's HTML escaping is not applied.
+func TestToJSON(t *testing.T) {
+	for _, test := range [][2]string{
+		{`builtins.toJSON 1.0`, `"1.0"`},
+		{`builtins.toJSON 1000000.0`, `"1000000.0"`},
+		{`builtins.toJSON 0.000001`, `"1e-06"`},
+		{`builtins.toJSON 1.0e20`, `"1e+20"`},
+		{`builtins.toJSON "<>&"`, `"\"<>&\""`},
+		{`builtins.toJSON { b = 1; a = 2; }`, `"{\"a\":2,\"b\":1}"`},
+		{`builtins.toJSON { outPath = "/x"; }`, `"\"/x\""`},
+	} {
+		got, err := evalPrint(t, test[0])
+		if err != nil {
+			t.Errorf("%s: %v", test[0], err)
+			continue
+		}
+		if got != test[1] {
+			t.Errorf("%s\n got: %s\nwant: %s", test[0], got, test[1])
+		}
+	}
+}
