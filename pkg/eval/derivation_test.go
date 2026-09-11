@@ -47,6 +47,30 @@ func TestDerivationPaths(t *testing.T) {
 			 in (builtins.derivation { name = "top"; builder = "/bin/sh"; system = "x86_64-linux"; outputs = [ "out" "dev" ]; dep = a.drvPath; }).dev.outPath`,
 			`"/nix/store/7ra3lknchpdc1xlkxdsmd0n8pnm9yqid-top-dev"`,
 		},
+		{
+			"fixed-output drvPath",
+			`(builtins.derivation { name = "fod"; builder = "/bin/sh"; system = "x86_64-linux";
+			   outputHash = "0000000000000000000000000000000000000000000000000000"; outputHashAlgo = "sha256"; outputHashMode = "flat"; }).drvPath`,
+			`"/nix/store/c96xwi096xizcwkc2j8n5v7gicy73hr5-fod.drv"`,
+		},
+		{
+			"fixed-output outPath",
+			`(builtins.derivation { name = "fod"; builder = "/bin/sh"; system = "x86_64-linux";
+			   outputHash = "0000000000000000000000000000000000000000000000000000"; outputHashAlgo = "sha256"; outputHashMode = "flat"; }).outPath`,
+			`"/nix/store/59209gx1b93k17d049isa072bka4iv8w-fod"`,
+		},
+		{
+			"structured-attrs drvPath",
+			`(builtins.derivation { name = "sa"; builder = "/bin/sh"; system = "x86_64-linux";
+			   __structuredAttrs = true; foo = "bar"; num = 3; list = [ 1 2 ]; nested = { x = 1; }; }).drvPath`,
+			`"/nix/store/hr0lqcjinhk4jwyy85yilgaa44fw4z93-sa.drv"`,
+		},
+		{
+			"structured-attrs outPath",
+			`(builtins.derivation { name = "sa"; builder = "/bin/sh"; system = "x86_64-linux";
+			   __structuredAttrs = true; foo = "bar"; num = 3; list = [ 1 2 ]; nested = { x = 1; }; }).outPath`,
+			`"/nix/store/prp16lg0jg0rz4zfkhrshg4acnffw82z-sa"`,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
