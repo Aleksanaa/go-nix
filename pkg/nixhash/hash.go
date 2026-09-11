@@ -52,14 +52,20 @@ type PathFilter func(path, typ string) bool
 // needs so that a bad path is a Nix error rather than a crash.
 func PathFiltered(path string, filter PathFilter) (Hash, error) {
 	h := sha256.New()
-	hs := NewSink(h)
-	if _, err := hs.Write(narVersionMagic1); err != nil {
-		return nil, err
-	}
-	if err := dump(path, hs, filter); err != nil {
+	if err := DumpPath(h, path, filter); err != nil {
 		return nil, err
 	}
 	return Hash(h.Sum(nil)), nil
+}
+
+// DumpPath writes the NAR encoding of a path to w, which is what the daemon
+// expects for addToStore and what PathFiltered hashes.
+func DumpPath(w io.Writer, pathname string, filter PathFilter) error {
+	sink := NewSink(w)
+	if _, err := sink.Write(narVersionMagic1); err != nil {
+		return err
+	}
+	return dump(pathname, sink, filter)
 }
 
 // Compress the hash down to size bytes.

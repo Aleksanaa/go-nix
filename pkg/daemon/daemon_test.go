@@ -1,8 +1,12 @@
 package daemon
 
 import (
+	"io"
 	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/aleksanaa/go-nix/pkg/nixhash"
 )
 
 func dialTest(t *testing.T) *Conn {
@@ -51,5 +55,28 @@ func TestQueryValidPaths(t *testing.T) {
 	}
 	if len(valid) != 1 || valid[0] != path {
 		t.Fatalf("QueryValidPaths(%s) = %v, want itself", path, valid)
+	}
+}
+
+func TestAddToStore(t *testing.T) {
+	c := dialTest(t)
+	p := filepath.Join(t.TempDir(), "hello.txt")
+	if err := os.WriteFile(p, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The daemon should assign the same path gon hashes in memory.
+	want, err := nixhash.StorePathFiltered(p, "hello.txt", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.AddToStore("hello.txt", nil, func(w io.Writer) error {
+		return nixhash.DumpPath(w, p, nil)
+	})
+	if err != nil {
+		t.Fatalf("AddToStore: %v", err)
+	}
+	if got != want {
+		t.Fatalf("AddToStore = %s, want %s", got, want)
 	}
 }
