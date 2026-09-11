@@ -109,11 +109,11 @@ func (x *Expression) setValue(v NixValue) {
 }
 
 // scope is the scope an unforced expression evaluates in.
-func (x *Expression) scope() *Scope {
+func (x *Expression) scope() *Env {
 	if x.kind != KindNone || x.b == nil {
 		return nil
 	}
-	return (*Scope)(x.a)
+	return (*Env)(x.a)
 }
 
 // node is the syntax an unforced expression evaluates, or nil for a builtin
@@ -134,7 +134,7 @@ func (x *Expression) native() *nativeCall {
 }
 
 // setThunk points the expression at a node to evaluate in a scope.
-func (x *Expression) setThunk(scope *Scope, n *p.Node) {
+func (x *Expression) setThunk(scope *Env, n *p.Node) {
 	x.a, x.b = unsafe.Pointer(scope), unsafe.Pointer(n)
 }
 
@@ -165,12 +165,12 @@ func (x *Expression) WithNode(w *worker, n *p.Node) *Expression {
 }
 
 // WithScoped derives an unevaluated expression for a node in a new scope.
-func (x *Expression) WithScoped(w *worker, n *p.Node, scope *Scope) *Expression {
+func (x *Expression) WithScoped(w *worker, n *p.Node, scope *Env) *Expression {
 	return newScoped(w, scope, n)
 }
 
 // newScoped is an unevaluated expression for a node in a scope.
-func newScoped(w *worker, scope *Scope, n *p.Node) *Expression {
+func newScoped(w *worker, scope *Env, n *p.Node) *Expression {
 	y := w.newExpr()
 	y.setThunk(scope, n)
 	return y
@@ -284,7 +284,7 @@ const maxCallDepth = 20000
 // pointer, so that an expression evaluated only for its value never has to
 // outlive the Go stack frame that forced it.
 type evalFrame struct {
-	scope  *Scope
+	scope  *Env
 	node   *p.Node
 	native *nativeCall
 	blame  blameKind
@@ -319,7 +319,7 @@ func (x *Expression) force(w *worker) NixValue {
 		frame := evalFrame{blame: x.blame}
 		var lower *Expression
 		if x.b != nil {
-			frame.scope, frame.node = (*Scope)(x.a), (*p.Node)(x.b)
+			frame.scope, frame.node = (*Env)(x.a), (*p.Node)(x.b)
 			w.stack[w.depth] = frame
 			w.depth++
 			lower = x.resolve(w)
@@ -358,13 +358,13 @@ func (x *Expression) force(w *worker) NixValue {
 
 // continueAt points the expression at the node to evaluate in its place, in
 // the scope that node belongs in. force picks it up from there.
-func (x *Expression) continueAt(n *p.Node, scope *Scope) {
+func (x *Expression) continueAt(n *p.Node, scope *Env) {
 	x.setThunk(scope, n)
 }
 
 // continueIn is continueAt for a node the backtrace should describe, such as
 // the body of a call.
-func (x *Expression) continueIn(n *p.Node, scope *Scope, kind blameKind) {
+func (x *Expression) continueIn(n *p.Node, scope *Env, kind blameKind) {
 	x.continueAt(n, scope)
 	x.blame = kind
 }
@@ -437,38 +437,6 @@ func (x *Expression) evalNodeAs(w *worker, n *p.Node, kind blameKind) NixValue {
 	return y.Eval(w)
 }
 
-// thunkFor is the expression to pass where something else will hold on to the
-// node rather than evaluate it at once — the argument of a call.
-//
-// An identifier that the scope chain already holds needs no thunk of its own:
-// the binding it names is one, and sharing it is also what makes the argument
-// evaluated at most once however many times the callee uses it. A literal is
-// the same value every time, so one expression per node serves every call.
-// Nix does the same, in Expr::maybeThunk.
-//
-// It reports whether what comes back was borrowed from another binding. A
-// borrowed expression is described by whoever it belongs to, so nothing may
-// relabel it for a backtrace; a literal is not borrowed in that sense, since
-// the expression a literal node is worked out into belongs to that node and to
-// nothing else, and labelling it says only what is already true.
-//
-// Borrowing is also what lets two places hold the very same thunk, which is
-// what makes them equal when what they hold is a value equal to nothing else —
-// a function. See sameThunk.
-func (scope *Scope) thunkFor(w *worker, n *p.Node) (*Expression, bool) {
-	switch n.Type {
-	case p.IDNode:
-		// A name the chain does not hold may still come from a `with`, whose
-		// set is not forced to find out: that one stays a thunk.
-		if y, ok := scope.lookupBorrow(w, n); ok {
-			return y, true
-		}
-	case p.IntNode, p.FloatNode, p.PathNode, p.URINode:
-		return scope.literalExpr(w, n), false
-	}
-	return newScoped(w, scope, n), false
-}
-
 // take makes this expression stand for what src stands for.
 //
 // It is a field-by-field copy rather than an assignment because an expression
@@ -538,20 +506,3 @@ func (x *Expression) claim(w *worker) bool {
 // evaluated into places of their own and are never the same thunk, in Nix as
 // here.
 func sameThunk(a, b *Expression) bool { return a == b }
-
-// thunkForBinding is thunkFor for the value of an attribute, which a backtrace
-// names after that attribute.
-//
-// It borrows a binding the same way, but takes no shortcut for a literal. The
-// expression a literal is worked out into is already a value, with no node left
-// to record the attribute's name against, and the name is worth more here than
-// the allocation it costs to keep: a set built out of literals is exactly where
-// a backtrace has to say which attribute failed.
-func (scope *Scope) thunkForBinding(w *worker, n *p.Node) (*Expression, bool) {
-	if n.Type == p.IDNode {
-		if y, ok := scope.lookupBorrow(w, n); ok {
-			return y, true
-		}
-	}
-	return newScoped(w, scope, n), false
-}

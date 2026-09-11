@@ -1,8 +1,6 @@
 package eval
 
 import (
-	"unsafe"
-
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
@@ -209,9 +207,13 @@ func newDefaultScope(w *worker) *Scope {
 	// The resolver needs the same names, in the same slots, to settle what a
 	// file's free names refer to before it is evaluated.
 	baseFrame = frameOfSet(main)
-	s := &Scope{bound: unsafe.Pointer(main)}
-	// The default scope is also where an import evaluates its file, which the
-	// worker carries so that a builtin need not name it before it exists.
+	// The default scope is where an import evaluates its file. The worker
+	// carries it so that a builtin need not name it before it exists.
+	env := &Env{vals: make([]*Expression, len(main.attrs))}
+	for i, a := range main.attrs {
+		env.vals[i] = a.x
+	}
+	s := &Scope{env: env, frame: baseFrame}
 	w.base = s
 	return s
 }

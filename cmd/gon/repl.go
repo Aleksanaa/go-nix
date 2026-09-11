@@ -31,11 +31,10 @@ const (
 // repl is one session: the names it has bound, and the files it was told to
 // load, which :r reloads.
 type repl struct {
-	ed    *editor
-	out   io.Writer
-	binds eval.NixSet
-	scope *eval.Scope
-	files []string
+	ed      *editor
+	out     io.Writer
+	session *eval.Session
+	files   []string
 }
 
 var replMain = register("repl", func() {
@@ -49,13 +48,19 @@ var replMain = register("repl", func() {
 	r.run()
 })
 
-// reset returns the session to the bindings it started with. The set the
-// scope holds is the same one entries bind into, so a name bound later is
-// visible to a thunk made earlier, which is what makes definitions in a REPL
-// behave like a `let`.
+// reset returns the session to the bindings it started with. A session binds
+// into one frame that stays where it is, so a name bound later is visible to a
+// thunk made earlier, which is what makes definitions in a REPL behave like a
+// `let`.
 func (r *repl) reset() {
-	r.binds = eval.NewSet(0)
-	r.scope = eval.DefaultScope.Subscope(r.binds, false)
+	r.session = eval.NewSession(eval.DefaultScope)
+}
+
+// bind gives a name a value for the rest of the session.
+func (r *repl) bind(sym eval.Sym, x *eval.Expression) {
+	if !r.session.Bind(sym, x) {
+		fmt.Fprintln(r.out, "error: too many variables in this session")
+	}
 }
 
 func (r *repl) run() {
@@ -109,7 +114,7 @@ func (r *repl) eval(src string) bool {
 			r.fail(err)
 			return true
 		}
-		r.binds.Set(eval.Intern(name), eval.Delay(r.scope, pr))
+		r.bind(eval.Intern(name), eval.Delay(r.session.Scope(), pr))
 		return true
 	}
 	if val, ok := r.value(src); ok {
@@ -125,7 +130,7 @@ func (r *repl) value(src string) (eval.NixValue, bool) {
 		r.fail(err)
 		return eval.NixValue{}, false
 	}
-	val, err := eval.EvalIn(r.scope, pr)
+	val, err := eval.EvalIn(r.session.Scope(), pr)
 	if err != nil {
 		r.fail(err)
 		return eval.NixValue{}, false
@@ -222,7 +227,7 @@ func (r *repl) add(val eval.NixValue, what string) {
 	names := set.Keys()
 	for _, sym := range names {
 		x, _ := set.Get(sym)
-		r.binds.Set(sym, x)
+		r.bind(sym, x)
 	}
 	fmt.Fprintf(r.out, "Added %d variables.\n", len(names))
 }
@@ -238,7 +243,7 @@ func (r *repl) load(path string) bool {
 		r.fail(err)
 		return false
 	}
-	val, err := eval.EvalIn(r.scope, pr)
+	val, err := eval.EvalIn(r.session.Scope(), pr)
 	if err != nil {
 		r.fail(err)
 		return false
@@ -360,7 +365,7 @@ func (r *repl) completeAt(line string, pos int) (start int, options []string, do
 	word := head[start:pos]
 	dot := strings.LastIndex(word, ".")
 	if dot < 0 {
-		return start, matching(r.scope.Names(), word), ""
+		return start, matching(r.session.Names(), word), ""
 	}
 	// `a.b.c` completes against the attributes of `a.b`, which has to be
 	// evaluated to find out what they are.
@@ -383,7 +388,7 @@ func (r *repl) set(src string) (eval.NixSet, bool) {
 	if err != nil {
 		return nil, false
 	}
-	val, err := eval.EvalIn(r.scope, pr)
+	val, err := eval.EvalIn(r.session.Scope(), pr)
 	if err != nil {
 		return nil, false
 	}

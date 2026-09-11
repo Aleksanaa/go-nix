@@ -14,7 +14,7 @@ func TestExpressionSize(t *testing.T) {
 	if got, want := unsafe.Sizeof(Expression{}), uintptr(32); got != want {
 		t.Errorf("Expression is %d bytes, want %d", got, want)
 	}
-	if got, want := unsafe.Sizeof(Scope{}), uintptr(32); got != want {
-		t.Errorf("Scope is %d bytes, want %d", got, want)
+	if got, want := unsafe.Sizeof(Env{}), uintptr(48); got != want {
+		t.Errorf("Env is %d bytes, want %d", got, want)
 	}
 }

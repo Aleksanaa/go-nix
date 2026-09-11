@@ -8,6 +8,7 @@
 package eval
 
 import (
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -103,11 +104,7 @@ func (x *Expression) resolve(w *worker) *Expression {
 		x.setValue(x.evalString(w))
 
 	case p.IDNode:
-		sym, y, ok := scope.lookupNode(w, n)
-		if !ok {
-			w.throwf(ErrUndefinedVariable, "undefined variable '%s'", sym)
-		}
-		return y
+		return scope.lookup(w, n)
 
 	case p.ParensNode:
 		x.continueAt(n.Nodes[0], scope)
@@ -134,10 +131,10 @@ func (x *Expression) resolve(w *worker) *Expression {
 		return x.evalSelect(w, nt)
 
 	case p.WithNode:
-		// The with-set is not forced here: a name is only looked up in it
-		// when no lexical binding provides it, and forcing it eagerly makes a
-		// fixpoint whose body is `with self; …` recurse. See Scope.withSet.
-		x.continueAt(n.Nodes[1], scope.withScope(w, x.WithScoped(w, n.Nodes[0], scope)))
+		// The with-set is not forced here: a name is only looked for in it when
+		// the frames do not bind it, and forcing it eagerly makes a fixpoint
+		// whose body is `with self; …` recurse. See Env.fromWith.
+		x.continueAt(n.Nodes[1], scope.withEnv(w, x.WithScoped(w, n.Nodes[0], scope)))
 
 	case p.IfNode:
 		cond := assertBool(w, x.evalNodeAs(w, n.Nodes[0], blameCond))
@@ -280,22 +277,40 @@ func (x *Expression) evalIndentedString(w *worker, entry *static) NixValue {
 }
 
 // evalBinds evaluates a set, a recursive set, or the bindings of a `let`.
+//
+// A `let` and a recursive set are in scope of their own bindings, so they open
+// a frame of the names the pass said they bind, and fill each slot as it is
+// bound. A binding written further down is an empty slot until then, which is
+// what a name used in a dynamic attribute name can see, and the only way to
+// see one; everything else reads the frame long after it is full, because a
+// binding is a thunk and nothing here forces one.
+//
+// A name the syntax does not give — `${e} = v` — is bound in the set but has no
+// slot, since the pass could not know it was coming. That is what Nix does too,
+// and it is why such a name is not in scope of the group's own bindings.
 func (x *Expression) evalBinds(w *worker, nt p.NodeType) {
 	n := x.node()
+	outer := x.scope()
 	bindNodes := n.Nodes
 	if nt == p.LetNode {
 		bindNodes = n.Nodes[0].Nodes
 	}
+
+	env, group := outer, []Sym(nil)
+	if nt == p.RecSetNode || nt == p.LetNode {
+		group = outer.file.static.get(n.ID).group
+		env = outer.child(w, len(group))
+	}
+	// slot is where a name of this group goes, or -1 for one it does not bind.
+	slot := func(sym Sym) int {
+		if i, ok := slices.BinarySearch(group, sym); ok {
+			return i
+		}
+		return -1
+	}
+
 	// Inherited bindings make the set larger than this estimate.
 	set := NewSet(len(bindNodes))
-	scope := x.scope()
-	if nt == p.RecSetNode || nt == p.LetNode {
-		// A recursive set and a `let` are in scope of their own bindings. The
-		// set records which group is building it, so that a binding looking a
-		// name up while the group is half built can tell one of the group's own
-		// names from one that belongs further out.
-		scope = scope.subscope(w, set.building(n.ID), false)
-	}
 	for _, c := range bindNodes {
 		switch c.Type {
 		default:
@@ -304,51 +319,68 @@ func (x *Expression) evalBinds(w *worker, nt p.NodeType) {
 		case p.BindNode:
 			// A dynamic component that evaluates to null skips the whole
 			// binding, which is how `{ ${null} = 1; }` binds nothing.
-			if scope.attrPathNull(w, c.Nodes[0]) {
+			if env.attrPathNull(w, c.Nodes[0]) {
 				continue
 			}
-			attrpath := scope.evalAttrPath(w, c.Nodes[0])
+			attrpath := env.evalAttrPath(w, c.Nodes[0])
 			// A value that names a binding is that binding, as a list element
 			// and a call argument are: Nix borrows the same way, in
 			// ExprAttrs::eval. What is borrowed is named by whoever it belongs
 			// to, so only a thunk of this binding's own is named after it.
-			y, borrowed := scope.thunkForBinding(w, c.Nodes[1])
+			y, borrowed := env.thunkForBinding(w, c.Nodes[1])
 			if !borrowed {
 				y.blamingAttr(attrpath[len(attrpath)-1])
 			}
 			leaf := set.Bind(w, attrpath, y)
+			if i := slot(attrpath[0]); i >= 0 {
+				// A path of one component binds the value itself; a longer one
+				// binds the set the rest of it was nested into.
+				if len(attrpath) == 1 {
+					env.vals[i] = y
+				} else if top, ok := set.Get(attrpath[0]); ok {
+					env.vals[i] = top
+				}
+			}
 			// The position is the attribute's name, so unsafeGetAttrPos can
 			// point back at it.
 			if comps := c.Nodes[0].Nodes; len(comps) > 0 {
-				leaf.setPos(attrpath[len(attrpath)-1], x.scope().parser().NodePos(comps[len(comps)-1]))
+				leaf.setPos(attrpath[len(attrpath)-1], outer.parser().NodePos(comps[len(comps)-1]))
 			}
 
 		case p.InheritNode:
-			// `inherit a;` is `a = a;` evaluated in the enclosing scope.
+			// `inherit a;` is `a = a;` read from the scope around the group, so
+			// that it takes the name it shadows rather than itself.
 			for _, id := range c.Nodes[0].Nodes {
-				y := x.WithNode(w, id)
-				sym := x.scope().attrSym(w, id)
-				set.Bind1(sym, y.blamingAttr(sym))
-				set.setPos(sym, x.scope().parser().NodePos(id))
+				sym := outer.file.static.get(id.ID).sym
+				y := newScoped(w, outer, id).blamingAttr(sym)
+				set.Bind1(sym, y)
+				set.setPos(sym, outer.parser().NodePos(id))
+				if i := slot(sym); i >= 0 {
+					env.vals[i] = y
+				}
 			}
 
 		case p.InheritFromNode:
 			// `inherit (e) a;` is `a = (e).a;`; e itself stays lazy, and is
 			// shared by every name inherited from it.
-			from := x.WithScoped(w, c.Nodes[0], scope)
+			from := newScoped(w, env, c.Nodes[0])
 			for _, id := range c.Nodes[1].Nodes {
-				sym := x.scope().attrSym(w, id)
-				set.Bind1(sym, from.selectAttr(w, sym).blamingAttr(sym))
-				set.setPos(sym, x.scope().parser().NodePos(id))
+				sym := outer.file.static.get(id.ID).sym
+				y := from.selectAttr(w, sym).blamingAttr(sym)
+				set.Bind1(sym, y)
+				set.setPos(sym, outer.parser().NodePos(id))
+				if i := slot(sym); i >= 0 {
+					env.vals[i] = y
+				}
 			}
 		}
 	}
-	// The names are put in order now that the group is complete, which is
-	// also when a name bound twice is caught. Nothing has read the set yet:
-	// the bindings are thunks, and the body below is only pointed at.
+	// The names are put in order now that the group is complete, which is also
+	// when a name bound twice is caught. Nothing has read the set yet: the
+	// bindings are thunks, and the body below is only pointed at.
 	set.finishAll(w)
 	if nt == p.LetNode {
-		x.continueAt(n.Nodes[1], scope)
+		x.continueAt(n.Nodes[1], env)
 	} else {
 		x.setValue(SetValue(set))
 	}
@@ -396,7 +428,7 @@ func (x *Expression) evalSelect(w *worker, nt p.NodeType) *Expression {
 // afresh on each call, and rebuilding the formal-argument map with it was one
 // of the largest sources of allocation in the evaluator.
 func (x *Expression) evalFunction(w *worker) NixValue {
-	return LambdaValue(w, &NixExprLambda{lambdaInfo: x.scope().lambdaInfo(w, x.node()), Scope: x.scope()})
+	return LambdaValue(w, &NixExprLambda{lambdaInfo: x.scope().lambdaInfo(w, x.node()), Env: x.scope()})
 }
 
 // lambdaInfo describes a function node: the names it binds and where its body
@@ -406,8 +438,8 @@ func (x *Expression) evalFunction(w *worker) NixValue {
 // before the evaluation started; see prepare.go. A shape the pass could not
 // accept is raised here rather than there, so that the failure belongs to the
 // evaluation that reached it and carries its backtrace.
-func (scope *Scope) lambdaInfo(w *worker, n *p.Node) *lambdaInfo {
-	e := scope.file.static.get(n.ID)
+func (env *Env) lambdaInfo(w *worker, n *p.Node) *lambdaInfo {
+	e := env.file.static.get(n.ID)
 	if e.lambda == nil {
 		w.throwf(ErrEval, "%s", e.bad)
 	}

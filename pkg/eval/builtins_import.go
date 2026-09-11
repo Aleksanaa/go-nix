@@ -99,7 +99,7 @@ func bScopedImport(w *worker, args ...*Expression) NixValue {
 	if err != nil {
 		w.throwf(ErrEval, "%s", err)
 	}
-	x := delay(w, w.base.subscope(w, scope, false), pr)
+	x := delay(w, w.base.Subscope(scope), pr)
 	return x.Eval(w)
 }
 

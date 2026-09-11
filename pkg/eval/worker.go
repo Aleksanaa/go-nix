@@ -25,25 +25,12 @@ type worker struct {
 	stack [maxCallDepth]evalFrame
 	depth int
 
-	// exprs and scopes are the blocks currently being handed out. A block is
-	// retained as long as its liveliest member, which is the trade the slab
+	// exprs, envs and slots are the blocks currently being handed out. A block
+	// is retained as long as its liveliest member, which is the trade the slab
 	// sizes describe.
-	exprs  []Expression
-	scopes []Scope
-
-	// memo is where each identifier's binding was found last time, by node
-	// id, for the file the worker is currently in. It cannot live against the
-	// syntax the way the rest of what is known about a node does: the slot it
-	// names is a position in a set built at run time, so it is a fact about
-	// this evaluation rather than about the source, and so belongs to whoever
-	// is doing it.
-	//
-	// One file is in hand at a time — the chain of a single evaluation stays
-	// in the file it started in — so the current one is cached and the rest
-	// are reached through the map.
-	memoFile *file
-	memo     []lookupMemo
-	memos    map[*file][]lookupMemo
+	exprs []Expression
+	envs  []Env
+	slots []*Expression
 
 	// seen is the sets and lists already printed in the current Print
 	// traversal, so that a value that refers back to itself — a derivation's
@@ -78,42 +65,27 @@ func (w *worker) newExpr() *Expression {
 	return x
 }
 
-// newScope returns a zeroed scope from the block being handed out.
-func (w *worker) newScope() *Scope {
-	if scopeSlabSize <= 1 {
-		return new(Scope)
+// newEnv returns a zeroed frame from the block being handed out.
+func (w *worker) newEnv() *Env {
+	if len(w.envs) == 0 {
+		w.envs = make([]Env, envSlabSize)
 	}
-	if len(w.scopes) == 0 {
-		w.scopes = make([]Scope, scopeSlabSize)
+	e := &w.envs[0]
+	w.envs = w.envs[1:]
+	return e
+}
+
+// newSlots returns n empty slots from the block being handed out. A frame's
+// slots outlive nothing the frame does not, so they come from a block of their
+// own rather than one allocation each.
+func (w *worker) newSlots(n int) []*Expression {
+	if n > envSlabSize {
+		return make([]*Expression, n)
 	}
-	s := &w.scopes[0]
-	w.scopes = w.scopes[1:]
+	if len(w.slots) < n {
+		w.slots = make([]*Expression, envSlabSize)
+	}
+	s := w.slots[:n:n]
+	w.slots = w.slots[n:]
 	return s
-}
-
-// lookupMemo is where a name was found last time: how many scopes up, and
-// which slot of that scope. Both are one-based, so that zero means nothing is
-// remembered; hops of -1 means the file binds the name nowhere, which the
-// syntax settles once and for all.
-type lookupMemo struct{ hops, slot int32 }
-
-// remember is the worker's memo for a node, growing into the file it is in.
-func (w *worker) remember(f *file, id uint32) *lookupMemo {
-	if w.memoFile != f {
-		w.enterFile(f)
-	}
-	return &w.memo[id]
-}
-
-// enterFile makes f the file the worker's memo is about.
-func (w *worker) enterFile(f *file) {
-	m, ok := w.memos[f]
-	if !ok {
-		m = make([]lookupMemo, len(f.static.entries))
-		if w.memos == nil {
-			w.memos = make(map[*file][]lookupMemo, 1)
-		}
-		w.memos[f] = m
-	}
-	w.memoFile, w.memo = f, m
 }

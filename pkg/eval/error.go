@@ -84,9 +84,9 @@ func (w *worker) throwf(kind ErrorKind, format string, args ...any) {
 // throwAt raises an evaluation error at a node, for a failure found while
 // evaluating something that has no expression of its own to be reported
 // from — reading a name, which goes straight to the binding.
-func (w *worker) throwAt(scope *Scope, n *p.Node, kind ErrorKind, format string, args ...any) {
+func (w *worker) throwAt(env *Env, n *p.Node, kind ErrorKind, format string, args ...any) {
 	err := &EvalError{Kind: kind, Msg: fmt.Sprintf(format, args...)}
-	if pr := scope.parser(); pr != nil {
+	if pr := env.parser(); pr != nil {
 		if pos := pr.NodePos(n); pos != nil {
 			err.Pos, err.Line = pos, pr.SourceLine(pos)
 		}

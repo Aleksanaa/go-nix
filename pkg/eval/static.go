@@ -74,9 +74,9 @@ type static struct {
 	// See resolve.go.
 	up   int32
 	slot int32
-	// withNode is the `with` whose set may hold this name, or zero when a
-	// construct binds it outright. It is what makes the chain of `with`s
-	// walkable from a name that is in none of them yet.
+	// withNode is the `with` whose set may hold this name, one more than its
+	// node id so that zero means none. It is what makes the chain of `with`s
+	// walkable from a name none of them has yet been asked for.
 	withNode uint32
 }
 
@@ -164,10 +164,10 @@ func intLiteral(w *worker, s string) NixValue {
 // is no thunk to hold the value: an operand of an arithmetic expression is
 // usually a literal or a name, and going through the whole force machinery
 // for a number was a measurable cost on call-heavy workloads.
-func (scope *Scope) literalValue(w *worker, n *p.Node) (NixValue, bool) {
+func (env *Env) literalValue(w *worker, n *p.Node) (NixValue, bool) {
 	switch n.Type {
 	case p.IntNode, p.FloatNode, p.PathNode, p.URINode:
-		return scope.literal(w, n), true
+		return env.literal(w, n), true
 	}
 	return NixValue{}, false
 }
@@ -176,25 +176,19 @@ func (scope *Scope) literalValue(w *worker, n *p.Node) (NixValue, bool) {
 // before the evaluation started. A literal the pass could not take — a number
 // out of range — is raised here, where the evaluation has a backtrace to
 // attach, rather than when the file was loaded.
-func (scope *Scope) literal(w *worker, n *p.Node) NixValue {
-	e := scope.file.static.get(n.ID)
+func (env *Env) literal(w *worker, n *p.Node) NixValue {
+	e := env.file.static.get(n.ID)
 	if e.bad != "" {
 		w.throwf(e.badKind, "%s", e.bad)
 	}
 	return e.val
 }
 
-// name returns the interned name of an identifier node, interning it at most
-// once.
-func (scope *Scope) name(n *p.Node) Sym {
-	return scope.file.static.get(n.ID).sym
-}
-
 // literalExpr returns a literal node as an already evaluated expression. A
 // literal is the same value however often it is reached, so one expression
 // serves every use of the node, and passing one as an argument costs nothing.
-func (scope *Scope) literalExpr(w *worker, n *p.Node) *Expression {
-	e := scope.file.static.get(n.ID)
+func (env *Env) literalExpr(w *worker, n *p.Node) *Expression {
+	e := env.file.static.get(n.ID)
 	if e.bad != "" {
 		w.throwf(e.badKind, "%s", e.bad)
 	}
@@ -211,11 +205,4 @@ func (e *static) cache(f *file, val NixValue) {
 		panic("eval: the cache against the syntax was written while evaluating")
 	}
 	e.val = val
-}
-
-// binds reports whether a binding group binds this name outright. A node that
-// is not a group binds nothing, which is what an empty list says.
-func (e *static) binds(sym Sym) bool {
-	_, found := slices.BinarySearch(e.group, sym)
-	return found
 }

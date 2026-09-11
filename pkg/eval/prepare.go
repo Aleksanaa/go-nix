@@ -18,10 +18,8 @@ import (
 // and `attrs []Sym` is a slice header, so it is a torn read rather than a
 // benign one. Filled in advance, it is immutable and can be read by anyone.
 //
-// What cannot be settled here stays out: where a name's binding is, because
-// the slot it lands in is a position in a set built at run time (the worker
-// keeps that, see lookupMemo), and the name of an attribute whose name is
-// itself computed.
+// What cannot be settled here stays out: the name of an attribute whose name
+// is itself computed, and what a `with` set holds.
 
 // prepare fills in everything about a file's nodes that the syntax decides.
 func (f *file) prepare(base *staticFrame) {
@@ -137,7 +135,7 @@ func (pr *preparer) str(n *p.Node) {
 		}
 	}
 	var x Expression
-	x.setThunk(&Scope{file: pr.file}, n)
+	x.setThunk(&Env{file: pr.file}, n)
 	val := x.evalString(mainWorker)
 	// The content is fixed by the syntax, so its symbol is too. Interning it
 	// now means a string literal used as an attribute name costs nothing when

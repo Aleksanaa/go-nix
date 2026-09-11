@@ -46,50 +46,64 @@ type lambdaInfo struct {
 }
 
 // NixExprLambda is a closure: a function written in Nix, together with the
-// scope it was defined in. Everything else about it is decided by the syntax
+// frame it was defined in. Everything else about it is decided by the syntax
 // and shared through lambdaInfo, so making one costs two words.
 type NixExprLambda struct {
 	*lambdaInfo
-	// Scope is the scope the function was defined in. It is held directly
-	// rather than through the defining Expression, which drops it once it has
-	// been forced.
-	Scope *Scope
+	// Env is the frame the function was defined in. It is held directly rather
+	// than through the defining Expression, which drops it once it has been
+	// forced.
+	Env *Env
 }
 
 func (f *NixExprLambda) Apply(w *worker, arg *Expression) *Expression {
-	var scope *Scope
+	// The frame holds what the function binds, in the slots the pass gave
+	// them: the `@` name first, if there is one, then the formals in the order
+	// they were written. See resolver.function.
+	env := f.Env.child(w, f.slots())
+	if f.HasArg {
+		env.vals[0] = arg
+	}
 	if f.HasFormal {
-		binds := NewSet(1 + len(f.FormalOrder))
-		scope = f.Scope.subscope(w, binds, false)
-		if f.HasArg {
-			binds.Bind1(f.Arg, arg)
-		}
-		f.bindFormals(w, binds, scope, arg)
-		binds.finish(w)
-	} else {
-		// `arg: body` binds one name, so it needs no map.
-		scope = f.Scope.Subscope1(w, f.Arg, arg)
+		f.bindFormals(w, env, arg)
 	}
 	// The frame points at the function, which says more than its body would.
-	return newScoped(w, scope, f.Body).blaming(blameCall)
+	return newScoped(w, env, f.Body).blaming(blameCall)
 }
 
-// bindFormals matches the argument against `{ a, b ? d, ... }` and adds the
-// resulting bindings. Defaults are evaluated in the function's own scope, so
-// one formal may refer to another.
-func (f *NixExprLambda) bindFormals(w *worker, binds NixSet, scope *Scope, arg *Expression) {
+// slots is how many names the function binds.
+func (f *lambdaInfo) slots() int {
+	n := len(f.FormalOrder)
+	if f.HasArg {
+		n++
+	}
+	return n
+}
+
+// formalSlot is where a formal's value goes, after the `@` name if there is one.
+func (f *lambdaInfo) formalSlot(i int) int {
+	if f.HasArg {
+		return i + 1
+	}
+	return i
+}
+
+// bindFormals matches the argument against `{ a, b ? d, ... }` and fills the
+// frame with it. Defaults are evaluated in the function's own frame, so one
+// formal may refer to another.
+func (f *NixExprLambda) bindFormals(w *worker, env *Env, arg *Expression) {
 	val := arg.Eval(w)
 	if val.Kind() != KindSet {
 		w.throwf(ErrType, "value is %s while a set was expected, as the function takes formal arguments",
 			anTypeName(val))
 	}
 	args := val.Set()
-	for _, sym := range f.FormalOrder {
+	for i, sym := range f.FormalOrder {
 		switch y, given := args.Get(sym); {
 		case given:
-			binds.Bind1(sym, y)
+			env.vals[f.formalSlot(i)] = y
 		case f.Formal[sym] != nil:
-			binds.Bind1(sym, newScoped(w, scope, f.Formal[sym]).blamingAttr(sym))
+			env.vals[f.formalSlot(i)] = newScoped(w, env, f.Formal[sym]).blamingAttr(sym)
 		default:
 			w.throwf(ErrEval, "function called without required argument '%s'", sym)
 		}
@@ -236,7 +250,7 @@ func applySpine(w *worker, x *Expression, fn NixLambda, args []*Expression) *Exp
 		for n < len(args) && infos[n-1].Body.Type == p.FunctionNode {
 			prev := infos[n-1]
 			if prev.next == nil {
-				prev.next = lam.Scope.lambdaInfo(w, prev.Body)
+				prev.next = lam.Env.lambdaInfo(w, prev.Body)
 			}
 			if prev.next.HasFormal {
 				break
@@ -244,7 +258,7 @@ func applySpine(w *worker, x *Expression, fn NixLambda, args []*Expression) *Exp
 			infos[n], n = prev.next, n+1
 		}
 
-		parent := bindArgs(w, lam.Scope, infos[:n], args[:n])
+		parent := bindArgs(w, lam.Env, args[:n])
 		body := infos[n-1].Body
 		if args = args[n:]; len(args) == 0 {
 			// The frame points at the function, which says more than its body
@@ -298,15 +312,10 @@ func applyToValue(w *worker, f NixLambda, v NixValue) *Expression {
 // innermost. Each scope keeps the one before it alive anyway, so taking them
 // from the same block retains nothing extra, and a call of several arguments
 // costs one slab allocation rather than one allocation per argument.
-func bindArgs(w *worker, outer *Scope, infos []*lambdaInfo, args []*Expression) *Scope {
+func bindArgs(w *worker, outer *Env, args []*Expression) *Env {
 	parent := outer
-	for i, info := range infos {
-		s := w.newScope()
-		*s = Scope{
-			sym: info.Arg, bound: unsafe.Pointer(args[i]),
-			Parent: parent, file: outer.file,
-		}
-		parent = s
+	for _, arg := range args {
+		parent = parent.bind1(w, arg)
 	}
 	return parent
 }

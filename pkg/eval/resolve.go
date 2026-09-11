@@ -1,10 +1,6 @@
 package eval
 
 import (
-	"fmt"
-	"os"
-	"sync"
-
 	p "github.com/aleksanaa/go-nix/pkg/parser"
 )
 
@@ -46,8 +42,9 @@ type staticFrame struct {
 	up     *staticFrame
 	slots  map[Sym]int32
 	isWith bool
-	// node is the `with` this frame belongs to, so that a name looked for in
-	// one can be looked for in the next one out.
+	// node is the `with` this frame belongs to, one more than its node id so
+	// that zero means none, so that a name looked for in one can be looked for
+	// in the next one out.
 	node uint32
 }
 
@@ -140,7 +137,7 @@ func (r *resolver) node(n *p.Node) {
 	case p.WithNode:
 		// The set is outside the `with` it introduces; the body is inside it.
 		r.node(n.Nodes[0])
-		f := &staticFrame{up: r.frame, isWith: true, node: n.ID}
+		f := &staticFrame{up: r.frame, isWith: true, node: n.ID + 1}
 		up, next, ok := r.frame.nearestWith()
 		e := r.pr.entry(n)
 		if ok {
@@ -281,74 +278,4 @@ func frameOfSet(set NixSet) *staticFrame {
 		slots[a.sym] = int32(i)
 	}
 	return &staticFrame{slots: slots}
-}
-
-// Checking the resolver against the search it replaces.
-//
-// The resolver's answer is only as good as its model of what the evaluator
-// does with scopes, and that model is the whole risk: a construct whose frame
-// it counts differently from the evaluator gives a wrong answer for every name
-// under it. So with GON_CHECK_RESOLVE=1 every lookup does both and complains
-// when they disagree, which is meant to be pointed at something large — the
-// whole of nixpkgs — before the search is taken out.
-var checkResolve = os.Getenv("GON_CHECK_RESOLVE") == "1"
-
-var resolveMismatch struct {
-	mu   sync.Mutex
-	seen map[uint32]bool
-}
-
-// checkAgainstSearch compares what the resolver said about a name with what
-// searching the chain for it finds.
-func (scope *Scope) checkAgainstSearch(n *p.Node, sym Sym) {
-	e := scope.file.static.get(n.ID)
-	_, hops, _, found := scope.lookupLexicalFrom(sym)
-
-	var why string
-	switch {
-	case found && e.slot == noSlot:
-		why = fmt.Sprintf("resolver says `with` or undefined, search found it %d frames up", hops)
-	case found && e.up != hops:
-		why = fmt.Sprintf("resolver says %d frames up, search found it %d up", e.up, hops)
-	case !found && e.slot != noSlot:
-		why = fmt.Sprintf("resolver says %d frames up in slot %d, search found nothing", e.up, e.slot)
-	default:
-		return
-	}
-
-	resolveMismatch.mu.Lock()
-	defer resolveMismatch.mu.Unlock()
-	if resolveMismatch.seen == nil {
-		resolveMismatch.seen = map[uint32]bool{}
-	}
-	if resolveMismatch.seen[n.ID] {
-		return
-	}
-	resolveMismatch.seen[n.ID] = true
-	pos := scope.file.parser.NodePos(n)
-	fmt.Fprintf(os.Stderr, "resolve: '%s' at %v: %s\n", sym, pos, why)
-}
-
-// frameOfScope is the shape of a scope chain, for resolving a file that will
-// be evaluated in it.
-//
-// It is how a file imported into a scope of its own — builtins.scopedImport —
-// is resolved against the names that scope really has, rather than against the
-// default one. Nix does the same thing, building a static env from the set's
-// names before it reads the file.
-func frameOfScope(scope *Scope) *staticFrame {
-	if scope == nil {
-		return nil
-	}
-	up := frameOfScope(scope.Parent)
-	switch {
-	case scope.LowPrio:
-		return &staticFrame{up: up, isWith: true}
-	case scope.sym != 0:
-		return frameOf(up, []Sym{scope.sym})
-	default:
-		f := frameOfSet(scope.binds())
-		f.up = up
-		return f
-	}
 }
