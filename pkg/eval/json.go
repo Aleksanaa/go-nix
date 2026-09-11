@@ -39,12 +39,6 @@ func ValueFromNative(w *worker, x any) NixValue {
 	return NixValue{}
 }
 
-// ValueToNative converts a Nix value into a value the JSON encoder accepts,
-// forcing it completely.
-func ValueToNative(w *worker, x NixValue) any {
-	return valueToNative(w, x, nil)
-}
-
 // valueToNative converts a value the way Nix's printValueAsJSON does: a set
 // with a __toString or outPath attribute serialises as its string form, which
 // is how derivations end up as store paths, and every other set becomes an
@@ -108,9 +102,14 @@ func bFromJSON(w *worker, args ...*Expression) NixValue {
 }
 
 func bToJSON(w *worker, args ...*Expression) NixValue {
-	out, err := nixjson.Marshal(ValueToNative(w, args[0].Eval(w)))
+	// Nix's toJSON keeps the string context of the value it serialises. That
+	// matters to nixpkgs: lib.generators.toLua turns a derivation into
+	// toJSON "${drv}", and the references must survive into whatever
+	// interpolates the result.
+	var ctx []stringContext
+	out, err := nixjson.Marshal(valueToNative(w, args[0].Eval(w), &ctx))
 	if err != nil {
 		w.throwf(ErrEval, "cannot serialise to JSON: %s", err)
 	}
-	return String(string(out))
+	return StrValue(stringWithContext(string(out), ctx...))
 }

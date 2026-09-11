@@ -93,6 +93,23 @@ func TestToJSON(t *testing.T) {
 	}
 }
 
+// TestToJSONContext pins that toJSON keeps the string context of the value it
+// serialises. nixpkgs's lib.generators.toLua serialises a derivation with
+// toJSON "${drv}", so the references have to survive for the generated file to
+// depend on the store paths it mentions.
+func TestToJSONContext(t *testing.T) {
+	src := `let d = builtins.derivation { name = "ctx"; builder = "/bin/sh"; system = "x86_64-linux"; };` +
+		` in builtins.getContext (builtins.toJSON "x ${d}")`
+	got, err := evalPrint(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{ "/nix/store/n96mls8jja99bb70ghnlxk8mdb5b51i9-ctx.drv" = { outputs = [ "out" ]; }; }`
+	if got != want {
+		t.Errorf("toJSON context = %s, want %s", got, want)
+	}
+}
+
 // TestMapAttrsLaziness pins that mapAttrs and zipAttrsWith defer applying their
 // callback until an attribute is read, as Nix's mkApp does. The callback may
 // take fewer arguments than the builtin passes, in which case the evaluator has
