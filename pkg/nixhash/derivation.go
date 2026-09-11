@@ -1,12 +1,12 @@
 package nixhash
 
 import (
-	"bytes"
-	"encoding/json"
 	"maps"
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/aleksanaa/go-nix/pkg/nixjson"
 )
 
 // Derivation hashing.
@@ -430,7 +430,7 @@ func (d *Derivation) JSON() ([]byte, error) {
 		args = []string{}
 	}
 
-	return marshalNoEscape(map[string]any{
+	return nixjson.Marshal(map[string]any{
 		"name":    d.Name,
 		"version": derivationJSONVersion,
 		"outputs": outputs,
@@ -443,17 +443,4 @@ func (d *Derivation) JSON() ([]byte, error) {
 		"args":    args,
 		"env":     d.Env,
 	})
-}
-
-// marshalNoEscape is json.Marshal without the HTML escaping Go applies by
-// default, which would turn a builder argument's ">" into "\u003e" where Nix
-// writes ">" verbatim.
-func marshalNoEscape(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }

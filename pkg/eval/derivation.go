@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/aleksanaa/go-nix/pkg/nixhash"
+	"github.com/aleksanaa/go-nix/pkg/nixjson"
 )
 
 // Derivations.
@@ -197,11 +198,11 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 	}
 
 	if structuredAttrs {
-		js, err := marshalJSON(jsonAttrs)
+		js, err := nixjson.Marshal(jsonAttrs)
 		if err != nil {
 			w.throwf(ErrEval, "cannot serialise structured attributes: %s", err)
 		}
-		drv.Env["__json"] = js
+		drv.Env["__json"] = string(js)
 	}
 
 	if outputs == nil {

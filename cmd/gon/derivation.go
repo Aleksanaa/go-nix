@@ -1,13 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/alecthomas/kingpin"
 	"github.com/aleksanaa/go-nix/pkg/eval"
+	"github.com/aleksanaa/go-nix/pkg/nixjson"
 	"github.com/aleksanaa/go-nix/pkg/parser"
 )
 
@@ -43,9 +43,7 @@ var derivationMain = register("derivation", func() {
 			name: body,
 		},
 	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	fail(enc.Encode(out))
-	fmt.Print(buf.String())
+	data, err := nixjson.Marshal(out)
+	fail(err)
+	fmt.Println(string(data))
 })
