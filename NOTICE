@@ -1,0 +1,28 @@
+go-nix
+Copyright (C) 2026 aleksana and the go-nix contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Lesser General Public License as published by the Free
+Software Foundation, either version 2.1 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+--------------------------------------------------------------------------
+
+Derived from Orivej Desh's go-nix
+(https://github.com/orivej/go-nix), which is released into the public domain
+under the UNLICENSE. The packages pkg/parser, pkg/nixhash, pkg/util and cmd/gon
+are based on that work; its original UNLICENSE is kept in the UNLICENSE file.
+
+To keep behaviour identical to the reference implementation, this project was
+implemented with heavy reference to the official Nix codebase
+(https://github.com/NixOS/nix), which is itself licensed under the GNU Lesser
+General Public License, version 2.1 or later. We have reproduced its behaviour
+and, where it made sense, its structure. We gratefully acknowledge all Nix
+contributors.

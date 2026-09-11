@@ -210,3 +210,18 @@ themselves otherwise. Use `go test -short ./...` to skip them regardless.
 - [ragel](https://www.colm.net/open-source/ragel/) generates the Nix lexer
 - [goyacc](https://godoc.org/golang.org/x/tools/cmd/goyacc) generates the Nix parser
 - [kingpin](https://github.com/alecthomas/kingpin) powers the CLI
+- all [Nix](https://github.com/NixOS/nix) contributors, whose implementation this
+  project follows for behaviour
+
+# License
+
+go-nix is licensed under the GNU Lesser General Public License, version 2.1 or
+later (LGPL-2.1-or-later). See [LICENSE](LICENSE).
+
+It is a derivative of [Orivej Desh's go-nix](https://github.com/orivej/go-nix),
+released into the public domain under the [UNLICENSE](UNLICENSE); in particular
+`pkg/parser`, `pkg/nixhash`, `pkg/util` and `cmd/gon` are based on that work.
+To keep behaviour identical, the project was written with heavy reference to the
+[official Nix codebase](https://github.com/NixOS/nix), which is itself
+LGPL-2.1-or-later. See [NOTICE](NOTICE) for the full attribution.
+

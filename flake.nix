@@ -29,6 +29,8 @@
           proxyVendor = true;
 
           ldflags = [ "-s" "-w" ];
+
+          meta.license = lib.licenses.lgpl21Plus;
         };
         default = go-nix;
       };
