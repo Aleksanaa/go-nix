@@ -75,6 +75,16 @@ func TestEval(t *testing.T) {
 		{`1 + 2`, `3`},
 		{`1 + 2.5`, `3.5`},
 		{`"a" + "b"`, `"ab"`},
+		// `+` coerces a set through outPath or __toString, so a derivation
+		// can be joined with a subdirectory. The first operand decides the
+		// result: a string stays a string, a path stays a path.
+		{`{ outPath = "/a"; } + "/b"`, `"/a/b"`},
+		{`"/a" + { outPath = "/b"; }`, `"/a/b"`},
+		{`{ __toString = self: "a"; } + "b"`, `"ab"`},
+		{`{ outPath = { outPath = "/a"; }; } + "b"`, `"/ab"`},
+		// A path concatenates with no separator, so `./x + "y"` names `./xy`.
+		{`builtins.baseNameOf (./x + "y")`, `"xy"`},
+		{`builtins.baseNameOf (./a + "/b")`, `"b"`},
 		{`7 - 2 * 3`, `1`},
 		{`6 / 3`, `2`},
 		{`- 2 + 1`, `-1`},
@@ -134,6 +144,10 @@ func TestEval(t *testing.T) {
 		{`builtins.foldl' (a: b: a + b) 0 [ 1 2 3 ]`, `6`},
 		{`builtins.sort (a: b: a < b) [ 3 1 2 ]`, `[ 1 2 3 ]`},
 		{`builtins.partition (x: x > 1) [ 1 2 ]`, `{ right = [ 2 ]; wrong = [ 1 ]; }`},
+		// mapAttrs and zipAttrsWith defer applying f: forcing only the set
+		// structure must not run a function whose value is a throw.
+		{`builtins.attrNames (builtins.mapAttrs (n: throw "boom") { a = 1; })`, `[ "a" ]`},
+		{`builtins.attrNames (builtins.zipAttrsWith (n: vs: throw "boom") [ { a = 1; } ])`, `[ "a" ]`},
 		{`builtins.groupBy (x: x) [ "a" "b" "a" ]`, `{ a = [ "a" "a" ]; b = [ "b" ]; }`},
 		{`builtins.concatLists [ [ 1 ] [ 2 ] ]`, `[ 1 2 ]`},
 		{`builtins.concatStringsSep "," [ "a" "b" ]`, `"a,b"`},
@@ -190,7 +204,9 @@ func TestEvalErrors(t *testing.T) {
 		{`{ a = 1; }.b`, `attribute 'b' missing`},
 		{`builtins.getAttr "b" { }`, `attribute 'b' missing`},
 		{`1 + "a"`, `value is a string while a number was expected`},
-		{`"a" + 1`, `value is an integer while a string was expected`},
+		{`"a" + 1`, `cannot coerce an integer to a string`},
+		{`{ a = 1; } + "x"`, `cannot coerce a set to a string`},
+		{`./x + (builtins.toFile "f" "c")`, `a string that refers to a store path cannot be appended to a path`},
 		{`1 1`, `value is an integer while a function was expected`},
 		{`(1).a`, `value is an integer while a set was expected`},
 		{`if 1 then 2 else 3`, `value is an integer while a Boolean was expected`},

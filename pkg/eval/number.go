@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"path"
 	"strconv"
 
 	p "github.com/aleksanaa/go-nix/pkg/parser"
@@ -57,20 +58,29 @@ func Arith(w *worker, a, b NixValue, op p.NodeType) NixValue {
 }
 
 // Add implements `+`, which concatenates strings and paths as well as adding
-// numbers.
+// numbers. As in Nix, the first operand decides: a number makes it arithmetic,
+// a path makes the result a path, and anything else — a string, or a set with
+// an outPath or a __toString, which is how `drv + "/subdir"` works — makes the
+// result a string.
 func Add(w *worker, a, b NixValue) NixValue {
 	switch a.kind {
-	case KindString:
-		return StrValue(a.Str().Concat(assertString(w, b)))
+	case KindInt, KindFloat:
+		return Arith(w, a, b, p.OpAddNode)
+
 	case KindPath:
-		// path + string and path + path both yield a path.
-		switch b.kind {
-		case KindString:
-			return PathValue(a.Path().Join(b.Str().Content))
-		case KindPath:
-			return PathValue(a.Path().Join(b.Path().String()))
+		// The operands are concatenated with no separator, so `./a + "b"`
+		// names `./ab` rather than `./a/b`; the result is then canonicalized.
+		// A reference to a store path cannot be folded into a path this way.
+		sa, sb := CoerceToString(w, a), CoerceToString(w, b)
+		if hasContext(sa) || hasContext(sb) {
+			w.throwf(ErrEval, "a string that refers to a store path cannot be appended to a path")
 		}
-		w.throwf(ErrType, "value is %s while a string was expected", anTypeName(b))
+		return PathValue(&NixPath{Path: path.Clean(sa.Content + sb.Content)})
 	}
-	return Arith(w, a, b, p.OpAddNode)
+	return StrValue(CoerceToString(w, a).Concat(CoerceToString(w, b)))
+}
+
+// hasContext reports whether a string refers to a derivation or a store path.
+func hasContext(s *NixString) bool {
+	return s.extra != nil && len(s.extra.Context) != 0
 }
