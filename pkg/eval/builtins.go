@@ -138,9 +138,9 @@ var builtins = map[string]builtin{
 	"parseFlakeRef":    {1, unimplemented("parseFlakeRef"), "Parse a flake reference.", false},
 	"flakeRefToString": {1, unimplemented("flakeRefToString"), "Render a flake reference.", false},
 	"fetchurl":         {1, unimplemented("fetchurl"), "Fetch a URL.", false},
-	"fetchTarball":     {2, unimplemented("fetchTarball"), "Fetch and unpack a tarball.", false},
-	"fetchGit":         {1, unimplemented("fetchGit"), "Fetch a Git repository.", false},
-	"fetchTree":        {1, unimplemented("fetchTree"), "Fetch a source tree.", false},
+	"fetchTarball":     {2, unimplemented("fetchTarball"), "Fetch and unpack a tarball.", true},
+	"fetchGit":         {1, unimplemented("fetchGit"), "Fetch a Git repository.", true},
+	"fetchTree":        {1, unimplemented("fetchTree"), "Fetch a source tree.", true},
 	"fetch":            {1, unimplemented("fetch"), "Fetch a flake input.", false},
 	"getFlake":         {1, unimplemented("getFlake"), "Fetch a flake.", false},
 	"nixPath":          {1, unimplemented("nixPath"), "The Nix search path.", false},
@@ -153,7 +153,7 @@ var builtins = map[string]builtin{
 	// Serialisation.
 	"fromJSON":    {1, bFromJSON, "Parse a JSON string into a Nix value.", false},
 	"toJSON":      {1, bToJSON, "Render a value as JSON.", false},
-	"fromTOML":    {1, bFromTOML, "Parse a TOML string into a Nix value.", false},
+	"fromTOML":    {1, bFromTOML, "Parse a TOML string into a Nix value.", true},
 	"toXML":       {1, bToXML, "Render a value as XML.", false},
 	"convertHash": {1, bConvertHash, "Re-encode a hash between formats.", false},
 
