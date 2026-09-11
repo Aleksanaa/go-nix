@@ -88,6 +88,20 @@ func (scope *Scope) parser() *p.Parser {
 	return scope.file.parser
 }
 
+// withScope nests a scope that provides a with-set, without forcing the set.
+// The set is only forced when a name is actually looked up in it, so that a
+// fixpoint whose body is `with self; …` does not recurse.
+func (scope *Scope) withScope(w *worker, x *Expression) *Scope {
+	s := w.newScope()
+	*s = Scope{bound: unsafe.Pointer(x), LowPrio: true, Parent: scope, file: scope.file}
+	return s
+}
+
+// withSet is the set a with scope's names come from, forced on first use.
+func (s *Scope) withSet(w *worker) NixSet {
+	return assertSet(w, (*Expression)(s.bound).Eval(w))
+}
+
 // lookupFrom finds sym, searching lexical bindings first and `with` bindings
 // only afterwards. It also reports where a lexical binding was found — how many
 // scopes had to be skipped, and which slot of that scope holds it. A `with`
@@ -95,18 +109,14 @@ func (scope *Scope) parser() *p.Parser {
 // and a nearer `with` shadows a farther one, so there is nothing about it
 // worth remembering.
 //
-// One walk answers both: a lexical binding anywhere in the chain beats every
-// `with`, so the nearest `with` match is remembered and only used once the
-// walk has finished without finding a lexical one.
-func (scope *Scope) lookupFrom(sym Sym) (x *Expression, hops, slot int32, ok bool) {
-	var with *Expression
+// The two are searched in two passes, not one: a lexical binding anywhere in
+// the chain beats every `with`, and a `with` set must not be forced until that
+// is known. Forcing it during the walk would recurse on a fixpoint whose body
+// is `with self; …`, where a name resolves lexically but only after the walk
+// has gone past the `with` scope.
+func (scope *Scope) lookupFrom(w *worker, sym Sym) (x *Expression, hops, slot int32, ok bool) {
 	for s := scope; s != nil; s, hops = s.Parent, hops+1 {
 		if s.LowPrio {
-			if with == nil {
-				if y, found := (*AttrSet)(s.bound).Get(sym); found {
-					with = y
-				}
-			}
 			continue
 		}
 		if s.sym != 0 {
@@ -121,8 +131,15 @@ func (scope *Scope) lookupFrom(sym Sym) (x *Expression, hops, slot int32, ok boo
 			}
 		}
 	}
-	// A `with` reports no place: -1 says there is nothing to remember.
-	return with, -1, -1, with != nil
+	// Nothing lexical: the nearest `with` set that has the name wins.
+	for s := scope; s != nil; s = s.Parent {
+		if s.LowPrio {
+			if y, found := s.withSet(w).Get(sym); found {
+				return y, -1, -1, true
+			}
+		}
+	}
+	return nil, -1, -1, false
 }
 
 // lookupNode finds what an identifier node refers to.
@@ -147,7 +164,7 @@ func (scope *Scope) lookupNode(w *worker, n *p.Node) (Sym, *Expression, bool) {
 		// nearest one wins. Nix marks such a name the same way.
 		for s := scope; s != nil; s = s.Parent {
 			if s.LowPrio {
-				if x, ok := (*AttrSet)(s.bound).Get(sym); ok {
+				if x, ok := s.withSet(w).Get(sym); ok {
 					return sym, x, true
 				}
 			}
@@ -171,7 +188,7 @@ func (scope *Scope) lookupNode(w *worker, n *p.Node) (Sym, *Expression, bool) {
 			}
 		}
 	}
-	x, hops, slot, ok := scope.lookupFrom(sym)
+	x, hops, slot, ok := scope.lookupFrom(w, sym)
 	if hops >= 0 {
 		m.hops, m.slot = hops+1, slot+1
 	} else {

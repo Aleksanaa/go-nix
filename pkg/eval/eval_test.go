@@ -57,6 +57,9 @@ func TestEval(t *testing.T) {
 		{`let a = 2; in with { a = 1; }; a`, `2`},
 		{`with { a = 2; }; with { a = 1; }; a`, `1`},
 		{`with { a = 1; }; with { b = 2; }; a`, `1`},
+		// A with-set is only forced when a name is looked up in it.
+		{`with (throw "boom"); 1`, `1`},
+		{`with { x = throw "boom"; y = 1; }; y`, `1`},
 
 		// Functions.
 		{`(a: a) 1`, `1`},
@@ -263,6 +266,51 @@ func TestFunctorErrors(t *testing.T) {
 		if !strings.Contains(err.Error(), test[1]) {
 			t.Errorf("%s\n got: %v\nwant it to contain: %s", test[0], err, test[1])
 		}
+	}
+}
+
+// TestWithFixpoint checks a fixpoint whose body is `self: with self; …`. The
+// with-set is self, so forcing it while looking up a name that a lexical
+// binding provides — or before any lookup at all — recurses. Both the set and
+// the lookup must stay lazy.
+func TestWithFixpoint(t *testing.T) {
+	for _, test := range [][2]string{
+		// A lexical binding beats the with-set without forcing it.
+		{`let x = 1; f = self: with self; { a = x; }; self = f self; in self.a`, `1`},
+		// A name read straight out of the recursive set through `with self`.
+		{`let f = self: with self; { a = 1; b = a; }; self = f self; in self.b`, `1`},
+		{`let f = self: with self; { b = a; a = 2; }; self = f self; in self.b`, `2`},
+	} {
+		got, err := evalPrint(t, test[0])
+		if err != nil {
+			t.Errorf("%s\nunexpected error: %v", test[0], err)
+			continue
+		}
+		if got != test[1] {
+			t.Errorf("%s\n got: %s\nwant: %s", test[0], got, test[1])
+		}
+	}
+}
+
+// TestMakeScopeFixpoint reproduces lib.makeScope, whose fixpoint body is
+// `self: with self; …`. The makeScope argument — a name resolved lexically —
+// must be found without forcing self, or the whole fixpoint recurses.
+func TestMakeScopeFixpoint(t *testing.T) {
+	src := `let
+	  makeScope = newScope: f:
+	    let
+	      self = { callPackage = self.newScope { }; } // f self // {
+	        newScope = scope: newScope (self // scope);
+	      };
+	    in self;
+	  hostPlatform = "linux";
+	in (makeScope null (self: with self; { result = hostPlatform; })).result`
+	got, err := evalPrint(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"linux"`; got != want {
+		t.Errorf("got %s, want %s", got, want)
 	}
 }
 

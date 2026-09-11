@@ -69,15 +69,3 @@ func TestStringContextBuiltins(t *testing.T) {
 		t.Errorf("appendContext = %s, want %s", got, want)
 	}
 }
-
-func TestLazyWithFixpoint(t *testing.T) {
-	// A fixpoint whose body is `with self; …` must not force self when a name
-	// resolves lexically.
-	got, err := evalPrint(t, `let f = self: with self; { a = 1; b = 2; }; self = f self; in self.b`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "2" {
-		t.Errorf("got %s, want 2", got)
-	}
-}

@@ -126,8 +126,10 @@ func (x *Expression) resolve(w *worker) *Expression {
 		return x.evalSelect(w, nt)
 
 	case p.WithNode:
-		attrs := assertSet(w, x.evalNodeAs(w, n.Nodes[0], blameWith))
-		x.continueAt(n.Nodes[1], scope.subscope(w, attrs, true))
+		// The with-set is not forced here: a name is only looked up in it
+		// when no lexical binding provides it, and forcing it eagerly makes a
+		// fixpoint whose body is `with self; …` recurse. See Scope.withSet.
+		x.continueAt(n.Nodes[1], scope.withScope(w, x.WithScoped(w, n.Nodes[0], scope)))
 
 	case p.IfNode:
 		cond := assertBool(w, x.evalNodeAs(w, n.Nodes[0], blameCond))
