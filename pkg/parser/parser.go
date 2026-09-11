@@ -120,6 +120,10 @@ func parse(lr *lexResult) (p *Parser, err error) {
 	yyErrorVerbose = true
 	yyParse(p)
 	if len(p.errors) == 0 {
+		// A name that only looks computed is folded first, so that everything
+		// after it — merging, and the pass that resolves names — sees one kind
+		// of static name rather than two.
+		p.foldAttrNames(p.Result)
 		p.normalize(p.Result)
 	}
 	if len(p.errors) == 0 {

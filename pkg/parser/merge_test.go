@@ -106,7 +106,12 @@ func TestStaticName(t *testing.T) {
 		{`{ "" = 1; }`, "", true},
 		{`{ "a\tb" = 1; }`, "", false},
 		{`{ "x${"y"}" = 1; }`, "", false},
-		{`{ ${"a"} = 1; }`, "", false},
+		// `${"a"}` is not computed at all: the parser folds it to the plain
+		// name it spells, as Nix does, so the group that binds it has it in
+		// scope like any other name.
+		{`{ ${"a"} = 1; }`, "a", true},
+		{`{ ${"a.b"} = 1; }`, "a.b", true},
+		{`{ ${"x" + "y"} = 1; }`, "", false},
 	} {
 		p, err := ParseString(test.src)
 		assert.NoError(t, err, test.src)

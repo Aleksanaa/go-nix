@@ -161,3 +161,28 @@ func (p *Parser) dupAttr(c *Node, path string) {
 }
 
 func isSetLiteral(n *Node) bool { return n.Type == SetNode || n.Type == RecSetNode }
+
+// foldAttrNames rewrites `${"a"}` into the plain name `"a"`, wherever a name is
+// written: a binding, an attribute path, an `?` test.
+//
+// An interpolation of a string with nothing in it to interpolate names the same
+// attribute every time, so it is not dynamic at all, and treating it as if it
+// were would keep it out of the names a `let` or a `rec` binds — where Nix puts
+// it. Nix folds it in the parser for the same reason; see the note on visit()
+// in its parser-state.hh.
+func (p *Parser) foldAttrNames(n *Node) {
+	for _, c := range n.Nodes {
+		p.foldAttrNames(c)
+	}
+	if n.Type != AttrPathNode {
+		return
+	}
+	for i, c := range n.Nodes {
+		if c.Type != InterpNode || len(c.Nodes) != 1 {
+			continue
+		}
+		if inner := c.Nodes[0]; inner.Type == StringNode {
+			n.Nodes[i] = inner
+		}
+	}
+}

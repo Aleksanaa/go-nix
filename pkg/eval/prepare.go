@@ -36,9 +36,17 @@ type preparer struct{ file *file }
 func (pr *preparer) entry(n *p.Node) *static { return pr.file.static.get(n.ID) }
 
 // node fills in what is known about a node and everything under it.
+//
+// What is under a node is settled first: what the pass records about a node is
+// mostly a summary of its children — the name a string spells, the names a
+// group binds — and a summary cannot be taken before there is something to
+// summarise.
 func (pr *preparer) node(n *p.Node) {
 	if n == nil {
 		return
+	}
+	for _, c := range n.Nodes {
+		pr.node(c)
 	}
 	switch n.Type {
 	case p.IDNode:
@@ -70,9 +78,6 @@ func (pr *preparer) node(n *p.Node) {
 	case p.LetNode:
 		pr.binds(n.Nodes[0].Nodes)
 		pr.entry(n).group = pr.groupNames(n.Nodes[0].Nodes)
-	}
-	for _, c := range n.Nodes {
-		pr.node(c)
 	}
 }
 
@@ -148,10 +153,11 @@ func (pr *preparer) str(n *p.Node) {
 func (pr *preparer) attrPath(n *p.Node) {
 	attrs := make([]Sym, len(n.Nodes))
 	for i, c := range n.Nodes {
-		if c.Type != p.IDNode {
+		sym, ok := pr.attrName(c)
+		if !ok {
 			return
 		}
-		attrs[i] = pr.name(c)
+		attrs[i] = sym
 	}
 	pr.entry(n).attrs = attrs
 }
@@ -252,8 +258,10 @@ func (pr *preparer) groupNames(bindNodes []*p.Node) []Sym {
 		case p.BindNode:
 			// The first component is what the group binds; the rest name
 			// attributes of the set it binds, which are not in scope here.
-			if path := c.Nodes[0].Nodes; len(path) > 0 && path[0].Type == p.IDNode {
-				add(pr.name(path[0]))
+			if path := c.Nodes[0].Nodes; len(path) > 0 {
+				if sym, ok := pr.attrName(path[0]); ok {
+					add(sym)
+				}
 			}
 		case p.InheritNode:
 			for _, id := range c.Nodes[0].Nodes {
@@ -266,4 +274,20 @@ func (pr *preparer) groupNames(bindNodes []*p.Node) []Sym {
 		}
 	}
 	return syms
+}
+
+// attrName is the name a component of an attribute path gives outright, and
+// whether it gives one. An identifier is one, and so is a string with nothing
+// interpolated into it — the parser has already folded `${"a"}` into one of
+// those, which is what makes it as static as `a` is.
+func (pr *preparer) attrName(n *p.Node) (Sym, bool) {
+	switch n.Type {
+	case p.IDNode:
+		return pr.name(n), true
+	case p.StringNode, p.IStringNode:
+		if s := pr.entry(n).val.Str(); s != nil {
+			return s.intern(), true
+		}
+	}
+	return 0, false
 }
