@@ -1586,7 +1586,7 @@ state 87
 	Op:  Op.impl Op 
 	Op:  Op impl Op.    (49)
 
-	impl  error
+	impl  shift 43
 	or  shift 42
 	and  shift 41
 	eq  shift 40
@@ -2386,9 +2386,9 @@ state 148
 67 working sets used
 memory: parser 308/240000
 123 extra closures
-851 shift entries, 6 exceptions
+852 shift entries, 5 exceptions
 83 goto entries
 198 entries saved by goto default
-Optimizer space used: output 381/240000
-381 table entries, 71 zero
+Optimizer space used: output 365/240000
+365 table entries, 70 zero
 maximum spread: 58, maximum offset: 145

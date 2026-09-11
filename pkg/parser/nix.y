@@ -16,7 +16,7 @@ assert_ if_ then else_ let in with or_ rec inherit ellipsis interp space comment
 uri path float int_ id text argID argBracket pipe_into pipe_from
 ':' '@' ',' ';' '"' '.' '(' ')' '[' ']' '{' '}' '='
 
-%nonassoc <token> impl
+%right <token> impl
 %left <token> or
 %left <token> and
 %nonassoc <token> eq neq
