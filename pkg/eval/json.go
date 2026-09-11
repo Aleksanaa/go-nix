@@ -68,7 +68,11 @@ func valueToNative(w *worker, x NixValue, ctx *[]stringContext) any {
 		}
 		return s.Content
 	case KindPath:
-		return x.Path().String()
+		s := copyPathToStore(w, x.Path().String())
+		if ctx != nil && s.extra != nil {
+			*ctx = append(*ctx, s.extra.Context...)
+		}
+		return s.Content
 	case KindList:
 		list := x.List()
 		result := make([]any, len(list))
@@ -79,7 +83,7 @@ func valueToNative(w *worker, x NixValue, ctx *[]stringContext) any {
 	case KindSet:
 		t := x.Set()
 		if t.Has(symToString) || t.Has(symOutPath) {
-			s := t.coerceToString(w, false)
+			s := t.coerceToString(w, false, true)
 			if ctx != nil && s.extra != nil {
 				*ctx = append(*ctx, s.extra.Context...)
 			}

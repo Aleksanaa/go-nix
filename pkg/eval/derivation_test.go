@@ -1,8 +1,12 @@
 package eval
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aleksanaa/go-nix/pkg/nixhash"
 )
 
 // The store paths below were produced by Nix for the same expressions, so the
@@ -358,6 +362,38 @@ func TestStructuredAttrs(t *testing.T) {
 			t.Errorf("error = %v, want a Boolean type error", err)
 		}
 	})
+}
+
+// TestStructuredPathContext covers a path literal inside structured attributes:
+// it must be copied to the store, and the reference to that store path must be
+// collected so the path becomes an input of the derivation.
+func TestStructuredPathContext(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "f.txt")
+	if err := os.WriteFile(p, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sp := nixhash.StorePath(p, "")
+
+	val, err := EvalString(`builtins.derivation { name = "x"; builder = "/bin/sh"; system = "x86_64-linux"; __structuredAttrs = true; src = ` + p + `; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := DerivationOf(val)
+	if d == nil {
+		t.Fatal("value is not a derivation")
+	}
+	if js := d.drv.Env["__json"]; !strings.Contains(js, `"src":"`+sp+`"`) {
+		t.Errorf("__json = %s, want src %s", js, sp)
+	}
+	inInputs := false
+	for _, src := range d.drv.InputSrcs {
+		if src == sp {
+			inInputs = true
+		}
+	}
+	if !inInputs {
+		t.Errorf("drv inputs %v do not include %s", d.drv.InputSrcs, sp)
+	}
 }
 
 // TestDerivationLaziness pins that builtins.derivation, like derivation.nix,
