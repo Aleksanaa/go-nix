@@ -614,3 +614,66 @@ func TestFixpointForcesWholeSet(t *testing.T) {
 		t.Errorf("got %s, want %s", got, want)
 	}
 }
+
+// TestDerivationEquality covers Nix's rule that two sets which both say they
+// are derivations are compared by their output path alone, and that everything
+// else is compared as it stands.
+//
+// It is not an optimisation: a derivation carries functions — `override`,
+// `overrideAttrs` — and a function is equal to nothing, so comparing two
+// derivations attribute by attribute would call every one of them different
+// from every other. nixpkgs leans on this, in `drv.pythonModule != python`.
+func TestDerivationEquality(t *testing.T) {
+	for _, test := range [][2]string{
+		// The output path decides it, whatever else the two carry.
+		{`{ type = "derivation"; outPath = "a"; x = 1; } == { type = "derivation"; outPath = "a"; x = 2; }`, `true`},
+		{`{ type = "derivation"; outPath = "a"; f = x: x; } == { type = "derivation"; outPath = "a"; f = y: y; }`, `true`},
+		{`{ type = "derivation"; outPath = "a"; } == { type = "derivation"; outPath = "a"; b = 1; }`, `true`},
+		{`{ type = "derivation"; outPath = "a"; } == { type = "derivation"; outPath = "b"; }`, `false`},
+		// The attribute order a set is written in does not matter.
+		{`{ type = "derivation"; outPath = "a"; } == { outPath = "a"; type = "derivation"; }`, `true`},
+		// Only a set that says `type = "derivation"` is one. Without that, an
+		// outPath is an attribute like any other and the two are compared
+		// whole — which is what tells a derivation from a set that merely
+		// happens to carry an output path.
+		{`{ outPath = "a"; x = 1; } == { outPath = "a"; x = 2; }`, `false`},
+		{`{ outPath = "a"; x = 1; } == { outPath = "a"; x = 1; }`, `true`},
+		{`{ type = "derivationX"; outPath = "a"; x = 1; } == { type = "derivationX"; outPath = "a"; x = 2; }`, `false`},
+		{`{ type = 1; outPath = "a"; } == { type = 2; outPath = "a"; }`, `false`},
+		// Both have to say so. A derivation compared with a set that merely
+		// carries an output path is compared whole, so the two differ by their
+		// `type` — checking only one side would call them equal.
+		{`{ type = "derivation"; outPath = "a"; } == { type = "notdrv"; outPath = "a"; }`, `false`},
+		{`{ type = "notdrv"; outPath = "a"; } == { type = "derivation"; outPath = "a"; }`, `false`},
+		// Where the two differ in size the walk stops before any value is
+		// forced, so an output path that would throw is never reached.
+		{`{ type = "derivation"; outPath = throw "forced"; } == { type = "notdrv"; }`, `false`},
+		{`{ type = "notdrv"; } == { type = "derivation"; outPath = throw "forced"; }`, `false`},
+		// A derivation without an output path has nothing to compare by, so it
+		// falls back to being compared whole.
+		{`{ type = "derivation"; } == { type = "derivation"; }`, `true`},
+		{`{ type = "derivation"; } == { type = "derivation"; b = 1; }`, `false`},
+		{`{ type = "derivation"; outPath = "a"; } == { type = "derivation"; }`, `false`},
+		// The rule applies wherever two values are compared, not only at the
+		// top: nested in a set or a list, and through the builtins that
+		// compare.
+		{`[ { type = "derivation"; outPath = "a"; k = 1; } ] == [ { type = "derivation"; outPath = "a"; k = 2; } ]`, `true`},
+		{`{ d = { type = "derivation"; outPath = "a"; k = 1; }; } == { d = { type = "derivation"; outPath = "a"; k = 2; }; }`, `true`},
+		{`builtins.elem { type = "derivation"; outPath = "a"; k = 1; } [ { type = "derivation"; outPath = "a"; k = 9; } ]`, `true`},
+		// The output paths are themselves compared as values, so a derivation
+		// standing in for one is compared by its own output path in turn.
+		{`{ type = "derivation"; outPath = { type = "derivation"; outPath = "z"; q = 1; }; }
+		  == { type = "derivation"; outPath = { type = "derivation"; outPath = "z"; q = 2; }; }`, `true`},
+		// `!=` is the same rule negated.
+		{`{ type = "derivation"; outPath = "a"; k = 1; } != { type = "derivation"; outPath = "a"; k = 2; }`, `false`},
+	} {
+		got, err := evalPrint(t, test[0])
+		if err != nil {
+			t.Errorf("%s: %v", test[0], err)
+			continue
+		}
+		if got != test[1] {
+			t.Errorf("%s: got %s, want %s", test[0], got, test[1])
+		}
+	}
+}

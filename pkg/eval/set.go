@@ -289,6 +289,22 @@ func (s *AttrSet) Update(other NixSet) NixSet {
 }
 
 func (s *AttrSet) Compare(w *worker, other NixSet) bool {
+	// Two derivations are equal when they build the same thing, which their
+	// output path already says. Nix compares them that way and so must this:
+	// a derivation carries functions — `override`, `overrideAttrs` — and a
+	// function is equal to nothing, not even itself, so comparing the two
+	// structurally would call every derivation different from every other.
+	// nixpkgs leans on this: `drv.pythonModule != python` is how a Python
+	// package checks it was built for the interpreter it is being used with.
+	// Both have to say so before either output path is looked at, let alone
+	// forced: a set that is not a derivation is compared as it stands.
+	if s.derivationLike(w) && other.derivationLike(w) {
+		a, aok := s.Get(symOutPath)
+		b, bok := other.Get(symOutPath)
+		if aok && bok {
+			return a.Eval(w).Compare(w, b.Eval(w))
+		}
+	}
 	if len(s.attrs) != len(other.attrs) {
 		return false
 	}
@@ -299,6 +315,18 @@ func (s *AttrSet) Compare(w *worker, other NixSet) bool {
 		}
 	}
 	return true
+}
+
+// derivationLike reports whether this set says it is a derivation, which is
+// what its `type` being the string "derivation" says. Only `type` is forced:
+// whether the other set is one decides whether anything else is looked at.
+func (s *AttrSet) derivationLike(w *worker) bool {
+	t, ok := s.Get(symType)
+	if !ok {
+		return false
+	}
+	v := t.Eval(w)
+	return v.Kind() == KindString && v.Str().Content == "derivation"
 }
 
 func symNames(syms []Sym) []string {
