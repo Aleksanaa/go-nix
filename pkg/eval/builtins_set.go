@@ -141,13 +141,18 @@ func bRemoveAttrs(w *worker, args ...*Expression) NixValue {
 }
 
 // bMapAttrs implements builtins.mapAttrs: f applied to each attribute's name
-// and value. The applications are lazy, as Nix's are.
+// and value. Applying f is deferred to when an attribute is read, as Nix's
+// `mkApp` is: forcing the result set must not force every value, or an overlay
+// whose function reads the fixpoint it is building recurses.
 func bMapAttrs(w *worker, args ...*Expression) NixValue {
 	f := assertLambda(w, args[0].Eval(w))
 	set := assertSet(w, args[1].Eval(w))
 	result := NewSet(set.Len())
 	for _, a := range set.attrs {
-		result.Bind1(a.sym, apply2(w, f, value(w, String(a.sym.String())), a.x))
+		sym, x := a.sym, a.x
+		result.Bind1(sym, thunk(w, func(w *worker) NixValue {
+			return apply2(w, f, value(w, String(sym.String())), x).Eval(w)
+		}))
 	}
 	return SetValue(result.finish(w))
 }
@@ -183,7 +188,11 @@ func bZipAttrsWith(w *worker, args ...*Expression) NixValue {
 
 	result := NewSet(len(counts))
 	for _, sym := range order {
-		result.Bind1(sym, apply2(w, f, value(w, String(sym.String())), value(w, ListValue(values[sym]))))
+		s := sym
+		list := value(w, ListValue(values[s]))
+		result.Bind1(s, thunk(w, func(w *worker) NixValue {
+			return apply2(w, f, value(w, String(s.String())), list).Eval(w)
+		}))
 	}
 	return SetValue(result.finish(w))
 }

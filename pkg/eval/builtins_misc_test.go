@@ -92,3 +92,38 @@ func TestToJSON(t *testing.T) {
 		}
 	}
 }
+
+// TestMapAttrsLaziness pins that mapAttrs and zipAttrsWith defer applying their
+// callback until an attribute is read, as Nix's mkApp does. The callback may
+// take fewer arguments than the builtin passes, in which case the evaluator has
+// to enter its body to find the next function; doing that while the result set
+// is being built forces every value and, for a callback that reads the set
+// being defined, recurses.
+func TestMapAttrsLaziness(t *testing.T) {
+	for _, test := range [][2]string{
+		// Reading only the names must not apply the callback.
+		{`builtins.attrNames (builtins.mapAttrs (name: 1) { a = 1; b = 2; })`, `[ "a" "b" ]`},
+		{`builtins.attrNames (builtins.zipAttrsWith (name: 1) [ { a = 1; } { a = 2; } ])`, `[ "a" ]`},
+		// The presence check does not force the value either.
+		{`builtins.mapAttrs (name: 1) { a = 1; } ? a`, `true`},
+		{`builtins.zipAttrsWith (name: 1) [ { a = 1; } ] ? a`, `true`},
+		// A callback that reads the set being defined must not be run until
+		// the set exists; attrNames only looks at the names.
+		{`let x = builtins.mapAttrs (name: x.a) { a = 1; b = 2; }; in builtins.attrNames x`, `[ "a" "b" ]`},
+	} {
+		got, err := evalPrint(t, test[0])
+		if err != nil {
+			t.Errorf("%s: %v", test[0], err)
+			continue
+		}
+		if got != test[1] {
+			t.Errorf("%s: got %s, want %s", test[0], got, test[1])
+		}
+	}
+
+	// The application is still made when the value is forced, so a callback
+	// that does not return a function for its second argument fails then.
+	if _, err := EvalString(`(builtins.mapAttrs (name: 1) { a = 1; }).a`); err == nil {
+		t.Error("forcing .a: expected an error, got nil")
+	}
+}
