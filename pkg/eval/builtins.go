@@ -111,8 +111,8 @@ var builtins = map[string]builtin{
 		"Narrow a whole-derivation reference to its path.", false},
 
 	// Paths and hashing.
-	"baseNameOf":   {1, bBaseNameOf, "The part of a path after the last slash.", false},
-	"dirOf":        {1, bDirOf, "The part of a path before the last slash.", false},
+	"baseNameOf":   {1, bBaseNameOf, "The part of a path after the last slash.", true},
+	"dirOf":        {1, bDirOf, "The part of a path before the last slash.", true},
 	"hashString":   {2, bHashString, "The base-16 digest of a string.", false},
 	"hashFile":     {2, bHashFile, "The base-16 digest of a file.", false},
 	"toFile":       {2, bToFile, "Store a string in a file and return its path.", false},
@@ -150,7 +150,7 @@ var builtins = map[string]builtin{
 
 	// Files.
 	"import":       {1, bImport, "Load and evaluate a Nix file.", true},
-	"scopedImport": {2, bScopedImport, "Import a Nix file with an alternate scope.", false},
+	"scopedImport": {2, bScopedImport, "Import a Nix file with an alternate scope.", true},
 
 	// Serialisation.
 	"fromJSON":    {1, bFromJSON, "Parse a JSON string into a Nix value.", false},
@@ -162,7 +162,7 @@ var builtins = map[string]builtin{
 	// Derivations.
 	"derivation":       {1, bDerivation, "Build a derivation from an attribute set.", true},
 	"derivationStrict": {1, bDerivationStrict, "Build a derivation, returning only its paths.", true},
-	"placeholder":      {1, bPlaceholder, "The placeholder string an output is known by before it is built.", false},
+	"placeholder":      {1, bPlaceholder, "The placeholder string an output is known by before it is built.", true},
 }
 
 // globals are the non-function names Nix predefines.
