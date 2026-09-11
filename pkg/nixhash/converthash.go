@@ -62,7 +62,7 @@ func decodeHash(s, algo string, allowEmpty bool) (Hash, string, error) {
 	var err error
 	switch {
 	case isSRI:
-		bytes, err = base64.StdEncoding.DecodeString(rest)
+		bytes, err = base64Decode(rest)
 	default:
 		switch len(rest) {
 		case size * 2:
@@ -70,7 +70,7 @@ func decodeHash(s, algo string, allowEmpty bool) (Hash, string, error) {
 		case (size*8 + 4) / 5:
 			bytes, err = base32Decode(rest, size)
 		default:
-			bytes, err = base64.StdEncoding.DecodeString(rest)
+			bytes, err = base64Decode(rest)
 		}
 	}
 	if err != nil {
@@ -94,6 +94,15 @@ func encodeHash(bytes []byte, algo, format string) (string, error) {
 		return algo + "-" + base64.StdEncoding.EncodeToString(bytes), nil
 	}
 	return "", fmt.Errorf("unknown hash format '%s', expected 'base16', 'base32', 'base64' or 'sri'", format)
+}
+
+// base64Decode accepts the standard base64 alphabet with or without padding.
+// Nix's SRI parser does, and nixpkgs contains unpadded hashes.
+func base64Decode(s string) ([]byte, error) {
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	return base64.RawStdEncoding.DecodeString(s)
 }
 
 func splitHashPrefix(s string) (algo, rest string, isSRI bool) {
