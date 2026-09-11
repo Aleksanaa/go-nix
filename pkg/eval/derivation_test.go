@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -159,4 +160,145 @@ func TestDerivationSelfReference(t *testing.T) {
 	if s, err := Print(val, -1); err != nil || s == "" {
 		t.Errorf("strict print = %q, %v", s, err)
 	}
+}
+
+// TestStructuredAttrs covers __structuredAttrs. When it is set, every ordinary
+// attribute is folded into a single __json environment variable instead of
+// becoming one of its own, while the attributes that name the derivation's own
+// fields are still read out and references are still collected as inputs. The
+// store paths and __json strings below were produced by Nix.
+func TestStructuredAttrs(t *testing.T) {
+	build := func(t *testing.T, src string) *Derivation {
+		t.Helper()
+		val, err := EvalString(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := DerivationOf(val)
+		if d == nil {
+			t.Fatal("value is not a derivation")
+		}
+		return d
+	}
+
+	t.Run("folds attributes into __json", func(t *testing.T) {
+		d := build(t, `builtins.derivation {
+			name = "sa"; builder = "/bin/sh"; system = "x86_64-linux";
+			__structuredAttrs = true;
+			foo = "bar"; num = 3; list = [ 1 2 ]; nested = { x = 1; };
+		}`)
+		if want := "/nix/store/hr0lqcjinhk4jwyy85yilgaa44fw4z93-sa.drv"; d.DrvPath() != want {
+			t.Errorf("drvPath = %s, want %s", d.DrvPath(), want)
+		}
+		want := `{"builder":"/bin/sh","foo":"bar","list":[1,2],"name":"sa","nested":{"x":1},"num":3,"system":"x86_64-linux"}`
+		if got := d.drv.Env["__json"]; got != want {
+			t.Errorf("__json = %s, want %s", got, want)
+		}
+		if len(d.drv.Env) != 2 {
+			t.Errorf("env = %v, want only __json and out", d.drv.Env)
+		}
+		if _, ok := d.drv.Env["foo"]; ok {
+			t.Error("attribute foo leaked into the environment")
+		}
+		if d.drv.Builder != "/bin/sh" || d.drv.System != "x86_64-linux" {
+			t.Errorf("builder/system = %q/%q, want /bin/sh/x86_64-linux", d.drv.Builder, d.drv.System)
+		}
+	})
+
+	t.Run("reads outputs from the attributes", func(t *testing.T) {
+		d := build(t, `builtins.derivation {
+			name = "sa"; builder = "/bin/sh"; system = "x86_64-linux";
+			__structuredAttrs = true; outputs = [ "out" "dev" ];
+		}`)
+		if want := "/nix/store/r557nlfsyjs0kawngz5pmkl4m5n6p7df-sa.drv"; d.DrvPath() != want {
+			t.Errorf("drvPath = %s, want %s", d.DrvPath(), want)
+		}
+		if _, ok := d.drv.Outputs["dev"]; !ok {
+			t.Error("dev output missing")
+		}
+		want := `{"builder":"/bin/sh","name":"sa","outputs":["out","dev"],"system":"x86_64-linux"}`
+		if got := d.drv.Env["__json"]; got != want {
+			t.Errorf("__json = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("ignore nulls drops null attributes", func(t *testing.T) {
+		d := build(t, `builtins.derivation {
+			name = "sa"; builder = "/bin/sh"; system = "x86_64-linux";
+			__structuredAttrs = true; __ignoreNulls = true;
+			keep = "yes"; drop = null;
+		}`)
+		if want := "/nix/store/1zvxkrrwnji67ifjbcaiw2r0wkq5cy9d-sa.drv"; d.DrvPath() != want {
+			t.Errorf("drvPath = %s, want %s", d.DrvPath(), want)
+		}
+		want := `{"builder":"/bin/sh","keep":"yes","name":"sa","system":"x86_64-linux"}`
+		if got := d.drv.Env["__json"]; got != want {
+			t.Errorf("__json = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("collects references as inputs", func(t *testing.T) {
+		d := build(t, `let dep = builtins.derivation { name = "dep"; builder = "/bin/true"; system = "x86_64-linux"; };
+			in builtins.derivation {
+				name = "sa"; builder = "/bin/sh"; system = "x86_64-linux";
+				__structuredAttrs = true;
+				text = "ref ${dep}"; direct = dep;
+			}`)
+		if want := "/nix/store/3d3zn8l3p0a0xc912kv34dx4qagn2plz-sa.drv"; d.DrvPath() != want {
+			t.Errorf("drvPath = %s, want %s", d.DrvPath(), want)
+		}
+		const dep = "/nix/store/v9ak4484q7m2q36wrjh2rvpks78h1156-dep.drv"
+		if got := d.drv.InputDrvs[dep]; len(got) != 1 || got[0] != "out" {
+			t.Errorf("input derivations = %v, want %s -> [out]", d.drv.InputDrvs, dep)
+		}
+		want := `{"builder":"/bin/sh","direct":"/nix/store/q29279kjjvm86j19gld6rsclr0khshzm-dep","name":"sa","system":"x86_64-linux","text":"ref /nix/store/q29279kjjvm86j19gld6rsclr0khshzm-dep"}`
+		if got := d.drv.Env["__json"]; got != want {
+			t.Errorf("__json = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("false is not structured", func(t *testing.T) {
+		d := build(t, `builtins.derivation {
+			name = "sa"; builder = "/bin/sh"; system = "x86_64-linux";
+			__structuredAttrs = false; foo = "bar";
+		}`)
+		if want := "/nix/store/4bq2xmck19614whad6s5fyl6ddhl4ncr-sa.drv"; d.DrvPath() != want {
+			t.Errorf("drvPath = %s, want %s", d.DrvPath(), want)
+		}
+		if _, ok := d.drv.Env["__json"]; ok {
+			t.Error("__json set without __structuredAttrs")
+		}
+		if got := d.drv.Env["foo"]; got != "bar" {
+			t.Errorf("env.foo = %q, want %q", got, "bar")
+		}
+		// Nix still writes __structuredAttrs to the environment when it is
+		// false, coerced to the empty string.
+		if got := d.drv.Env["__structuredAttrs"]; got != "" {
+			t.Errorf("env.__structuredAttrs = %q, want %q", got, "")
+		}
+	})
+
+	t.Run("non-bool __structuredAttrs is rejected", func(t *testing.T) {
+		_, err := EvalString(`builtins.derivationStrict {
+			name = "sa"; builder = "/bin/sh"; system = "x86_64-linux"; __structuredAttrs = 1;
+		}`)
+		if err == nil {
+			t.Fatal("expected an error, got nil")
+		}
+		if !strings.Contains(err.Error(), "Boolean") {
+			t.Errorf("error = %v, want a Boolean type error", err)
+		}
+	})
+
+	t.Run("non-bool __ignoreNulls is rejected", func(t *testing.T) {
+		_, err := EvalString(`builtins.derivationStrict {
+			name = "sa"; builder = "/bin/sh"; system = "x86_64-linux"; __ignoreNulls = 1;
+		}`)
+		if err == nil {
+			t.Fatal("expected an error, got nil")
+		}
+		if !strings.Contains(err.Error(), "Boolean") {
+			t.Errorf("error = %v, want a Boolean type error", err)
+		}
+	})
 }

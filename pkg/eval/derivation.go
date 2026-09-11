@@ -108,17 +108,16 @@ func outputString(d *Derivation, out string) *NixString {
 func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 	name := derivationAttr(w, attrs, symName)
 
-	// __structuredAttrs and __ignoreNulls are read first, as in Nix.
+	// __structuredAttrs and __ignoreNulls are read first, as in Nix. Both are
+	// required to be booleans; __ignoreNulls is skipped when the attributes
+	// are folded into JSON, and __structuredAttrs is skipped when they are not.
+	structuredAttrs := false
 	if attr, ok := attrs.Get(symStructuredAttrs); ok {
-		if val := attr.Eval(w); val.Kind() == KindBool && val.Bool() {
-			w.throwf(ErrEval, "structured attributes are not supported")
-		}
+		structuredAttrs = assertBool(w, attr.Eval(w))
 	}
 	ignoreNulls := false
 	if attr, ok := attrs.Get(symIgnoreNulls); ok {
-		if b := attr.Eval(w); b.Kind() == KindBool {
-			ignoreNulls = b.Bool()
-		}
+		ignoreNulls = assertBool(w, attr.Eval(w))
 	}
 
 	drv := &nixhash.Derivation{
@@ -131,15 +130,29 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 	var context []stringContext
 	var outputHash, outputHashAlgo, outputHashMode string
 	hasOutputHash := false
+	var jsonAttrs map[string]any
+	if structuredAttrs {
+		jsonAttrs = make(map[string]any, len(attrs.attrs))
+	}
 
 	for _, a := range attrs.attrs {
 		sym := a.sym
 		key := sym.String()
-		if sym == symIgnoreNulls || sym == symStructuredAttrs {
+		// __ignoreNulls never reaches the environment. __structuredAttrs only
+		// does in the non-structured case, where it is coerced like any other
+		// attribute; when it is true every attribute is folded into __json.
+		if sym == symIgnoreNulls {
+			continue
+		}
+		if sym == symStructuredAttrs && structuredAttrs {
+			continue
+		}
+		val := a.x.Eval(w)
+		if ignoreNulls && val.Kind() == KindNull {
 			continue
 		}
 		if sym == symArgs {
-			list := assertList(w, a.x.Eval(w))
+			list := assertList(w, val)
 			for _, el := range list {
 				str := ToString(w, el.Eval(w))
 				drv.Args = append(drv.Args, str.Content)
@@ -147,27 +160,40 @@ func derivationStrictInternal(w *worker, attrs *AttrSet) *Derivation {
 			}
 			continue
 		}
-		val := a.x.Eval(w)
-		if ignoreNulls && val.Kind() == KindNull {
-			continue
+		// With structured attributes every attribute is folded into one JSON
+		// value instead of becoming an environment variable of its own; its
+		// references are still collected for the derivation's inputs.
+		if structuredAttrs {
+			jsonAttrs[key] = valueToNative(w, val, &context)
+		} else {
+			str := ToString(w, val)
+			drv.Env[key] = str.Content
+			context = appendStringContext(context, str)
 		}
-		str := ToString(w, val)
-		drv.Env[key] = str.Content
-		context = appendStringContext(context, str)
+		// The attributes that name the derivation's own fields are read out
+		// in either mode. Only these are coerced to a string.
 		switch sym {
 		case symBuilder:
-			drv.Builder = str.Content
+			drv.Builder = ToString(w, val).Content
 		case symSystem:
-			drv.System = str.Content
+			drv.System = ToString(w, val).Content
 		case symOutputs:
-			outputs = strings.Fields(str.Content)
+			outputs = strings.Fields(ToString(w, val).Content)
 		case symOutputHash:
-			outputHash, hasOutputHash = str.Content, true
+			outputHash, hasOutputHash = ToString(w, val).Content, true
 		case symOutputHashAlgo:
-			outputHashAlgo = str.Content
+			outputHashAlgo = ToString(w, val).Content
 		case symOutputHashMode:
-			outputHashMode = str.Content
+			outputHashMode = ToString(w, val).Content
 		}
+	}
+
+	if structuredAttrs {
+		js, err := marshalJSON(jsonAttrs)
+		if err != nil {
+			w.throwf(ErrEval, "cannot serialise structured attributes: %s", err)
+		}
+		drv.Env["__json"] = js
 	}
 
 	if outputs == nil {
