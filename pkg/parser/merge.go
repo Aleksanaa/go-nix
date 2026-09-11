@@ -108,8 +108,9 @@ func staticBindName(p *Parser, c *Node) (string, bool) {
 }
 
 // unfold turns `a.b.c = e` into `a = { b = { c = e; }; }`, which is what Nix's
-// parser does as it reads the path. A path with a computed component is left
-// alone: its nesting is only known at evaluation time.
+// parser does as it reads the path. A computed component nests the same way:
+// `a."${x}".b = e` becomes `a = { "${x}" = { b = e; }; }`, so the name is only
+// forced when that set is, and `a."${x}"` still merges with a sibling `a.y`.
 func (p *Parser) unfold(c *Node) *Node {
 	if c.Type != BindNode {
 		return c
@@ -117,11 +118,6 @@ func (p *Parser) unfold(c *Node) *Node {
 	path := c.Nodes[0].Nodes
 	if len(path) <= 1 {
 		return c
-	}
-	for _, comp := range path {
-		if _, ok := staticName(p, comp); !ok {
-			return c
-		}
 	}
 	rhs := c.Nodes[1]
 	for i := len(path) - 1; i >= 1; i-- {

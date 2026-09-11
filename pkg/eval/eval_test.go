@@ -37,6 +37,10 @@ func TestEval(t *testing.T) {
 		{`(rec { a = 2; b = a; }).b`, `2`},
 		{`(rec { a.b.c = 2; b = a; }).b`, `{ b = { c = 2; }; }`},
 		{`rec { a = rec { d = b; }; b = 3; }.a.d`, `3`},
+		// A computed step in an attribute path nests and merges like a static
+		// one; forcing its name must wait until the set it belongs to is.
+		{`(rec { a = 1; b.users."${toString a}" = {}; b.x = 2; }).b`, `{ users = { "1" = { }; }; x = 2; }`},
+		{`let fix = f: let x = f x; in x; in (fix (self: { a = 1; b.users."${toString self.a}" = {}; })).b`, `{ users = { "1" = { }; }; }`},
 		{`{ a = 1; }.b or 2`, `2`},
 		{`{ a = 1; }.a.b or 2`, `2`},
 		{`{ a.b = 1; } ? a.b`, `true`},

@@ -31,13 +31,24 @@ func TestMergeAttrPaths(t *testing.T) {
 	}
 }
 
-// TestMergeAttrPathsKeepsComputed covers that a path with a computed component
-// is not unfolded: its nesting is only known at evaluation time.
-func TestMergeAttrPathsKeepsComputed(t *testing.T) {
-	p, err := ParseString(`{ a.${builtins.toString 1} = 1; }`)
+// TestMergeAttrPathsComputed covers that a path with a computed component is
+// unfolded like any other, into nested sets — the nesting is known at parse
+// time even though the name is not — so the name is only forced when its set
+// is, and a sibling sharing the prefix still merges.
+func TestMergeAttrPathsComputed(t *testing.T) {
+	p, err := ParseString(`{ a.${builtins.toString 1} = 1; a.x = 2; }`)
 	assert.NoError(t, err)
-	assert.Equal(t, 1, len(p.Result.Nodes))
-	assert.Equal(t, 2, len(p.Result.Nodes[0].Nodes[0].Nodes))
+
+	set := p.Result
+	assert.Equal(t, 1, len(set.Nodes))
+	assert.Equal(t, "a", bindName(p, set.Nodes[0]))
+
+	inner := set.Nodes[0].Nodes[1]
+	assert.Equal(t, SetNode, inner.Type)
+	assert.Equal(t, 2, len(inner.Nodes))
+	for _, b := range inner.Nodes {
+		assert.Equal(t, 1, len(b.Nodes[0].Nodes))
+	}
 }
 
 // TestMergeAttrPathsRejectsDuplicate covers that a repeat which cannot be
